@@ -13,7 +13,7 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 # ═══════════════════════════════════════════════════════════════
 #  Configuration
 # ═══════════════════════════════════════════════════════════════
-PI_IP       = "192.168.0.138"
+PI_IP       = "192.168.1.111"
 PI_TCP_PORT = 9000
 WS_PORT     = 8765
 HTTP_PORT   = 8766
@@ -503,6 +503,29 @@ class RobotController:
             codes = msg.get("codes", [])
             if codes:
                 self._log(f"[QR] Browser result: {' | '.join(codes)}")
+    
+        elif t == 'motor':
+            # {"type":"motor","id":1,"action":"setvel","value":50}
+            _send_pi(msg)
+            self._log(f"Motor M{msg.get('id')} → {msg.get('action')} {msg.get('value','')}")
+
+        elif t == 'motor_sync':
+            # {"type":"motor_sync","action":"syncvel","v1":50,"v2":-50}
+            _send_pi(msg)
+            self._log(f"MotorSync → {msg.get('action')}")
+
+        elif t == 'motor_all':
+            # {"type":"motor_all","action":"stop"}
+            _send_pi(msg)
+            self._log(f"MotorAll → {msg.get('action')}")
+
+        elif t == 'motor_feedback':
+            # feedback จาก Teensy ผ่าน Pi → push ไป browser
+            _push_ws(msg)
+
+        elif t == 'motor_ack':
+            # ack จาก Teensy → push ไป browser
+            _push_ws(msg)
 
     def cleanup(self):
         self.running = False
@@ -649,13 +672,13 @@ def main():
 
     def _open():
         time.sleep(1.2)
-        webbrowser.open(f"http://localhost:{HTTP_PORT}/control.html")
+        webbrowser.open(f"http://localhost:{HTTP_PORT}/ui/control.html")
     threading.Thread(target=_open, daemon=True).start()
 
     print(f"\n{'='*64}")
     print("  RescueBot Windows Bridge + QR")
     print(f"  WS   → ws://localhost:{WS_PORT}")
-    print(f"  HTTP → http://localhost:{HTTP_PORT}/control.html")
+    print(f"  HTTP → http://localhost:{HTTP_PORT}/ui/control.html")
     print(f"  Pi   → {PI_IP}:{PI_TCP_PORT}")
     print(f"  RTSP → {RTSP_URL}")
     print(f"  Flask QR → {FLASK_BASE}")
