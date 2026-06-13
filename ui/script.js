@@ -222,6 +222,7 @@ function connectWS() {
       }
       if (msg.type === 'snap_ack') handleSnapAck(msg);
       if (msg.type === 'custom_posture_ack') handleCustomPostureAck(msg);
+      if (msg.type === 'imu') updateIMU(msg);
       renderAll();
     } catch(e) { addLog('msg err: ' + e.message, 'err'); }
   };
@@ -1623,6 +1624,130 @@ function resetGearSpeeds() {
 
 
 // ═══════════════════════════════════════
+//  FIT-TO-SCREEN — ยืด #ui-root (1920×1080) ให้เต็มจอทุกอุปกรณ์
+//  ใช้ scale แยกแกน (X,Y) → เต็มจอ ไม่เหลือขอบ, layout เท่ากันทุกเครื่อง
+//  เรียกทุกครั้งที่ resize / เปลี่ยนอุปกรณ์
+// ═══════════════════════════════════════
+const UI_DESIGN_W = 1920, UI_DESIGN_H = 1080;
+function fitUIRoot() {
+  const root = document.getElementById('ui-root');
+  if (!root) return;
+  const sx = window.innerWidth  / UI_DESIGN_W;
+  const sy = window.innerHeight / UI_DESIGN_H;
+  root.style.transform = `scale(${sx}, ${sy})`;
+}
+window.addEventListener('resize', fitUIRoot);
+window.addEventListener('orientationchange', fitUIRoot);
+
+
+// ═══════════════════════════════════════
+//  IMU WIDGET (Arm/Gripper panel) — data via rescue.py WebSocket {type:'imu',...}
+// ═══════════════════════════════════════
+const imuState = { roll: 0, pitch: 0, yaw: 0, live: false };
+let _imuStaleTimer = null;
+
+function updateIMU(msg) {
+  if (typeof msg.roll  === 'number') imuState.roll  = msg.roll;
+  if (typeof msg.pitch === 'number') imuState.pitch = msg.pitch;
+  if (typeof msg.yaw   === 'number') imuState.yaw   = msg.yaw;
+
+  const fmt = v => (v >= 0 ? '+' : '') + v.toFixed(1);
+  const rEl = document.getElementById('imuRoll');
+  const pEl = document.getElementById('imuPitch');
+  const yEl = document.getElementById('imuYaw');
+  if (rEl) rEl.textContent = fmt(imuState.roll);
+  if (pEl) pEl.textContent = fmt(imuState.pitch);
+  if (yEl) yEl.textContent = fmt(imuState.yaw);
+
+  const st = document.getElementById('imuStatus');
+  if (st) { st.textContent = 'LIVE'; st.className = 'imu-live'; }
+  imuState.live = true;
+  clearTimeout(_imuStaleTimer);
+  _imuStaleTimer = setTimeout(() => {
+    imuState.live = false;
+    const s = document.getElementById('imuStatus');
+    if (s) { s.textContent = 'NO DATA'; s.className = 'imu-stale'; }
+  }, 1500);
+
+  drawIMUAH();
+}
+
+function drawIMUAH() {
+  const canvas = document.getElementById('imuAH');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const cx = W/2, cy = H/2, R = W/2 - 5;
+  const roll = imuState.roll, pitch = imuState.pitch, yaw = imuState.yaw;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.clip();
+
+  const pitchPx = (pitch / 90) * R;
+  const rollRad = roll * Math.PI / 180;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-rollRad);
+  // sky
+  ctx.fillStyle = '#0a2238';
+  ctx.fillRect(-R, -R*2 + pitchPx, R*2, R*2);
+  // ground
+  ctx.fillStyle = '#241200';
+  ctx.fillRect(-R, pitchPx, R*2, R*2);
+  // horizon line
+  ctx.strokeStyle = '#ffaa00'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(-R, pitchPx); ctx.lineTo(R, pitchPx); ctx.stroke();
+  // pitch ladder
+  for (let deg = -30; deg <= 30; deg += 10) {
+    if (deg === 0) continue;
+    const y = pitchPx - (deg / 90) * R;
+    const len = deg % 20 === 0 ? 26 : 14;
+    ctx.strokeStyle = 'rgba(0,212,255,0.5)'; ctx.lineWidth = 0.7;
+    ctx.beginPath(); ctx.moveTo(-len/2, y); ctx.lineTo(len/2, y); ctx.stroke();
+  }
+  ctx.restore();
+
+  // fixed aircraft reference
+  ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx - 26, cy); ctx.lineTo(cx - 9, cy);
+  ctx.moveTo(cx + 9, cy);  ctx.lineTo(cx + 26, cy);
+  ctx.moveTo(cx, cy - 5);  ctx.lineTo(cx, cy + 5);
+  ctx.stroke();
+  ctx.fillStyle = '#00ff88';
+  ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // outer ring
+  ctx.strokeStyle = 'rgba(0,212,255,0.35)'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.stroke();
+
+  // roll pointer (triangle at top)
+  const rRad = (roll - 90) * Math.PI / 180;
+  const tipX = cx + Math.cos(rRad) * (R - 3);
+  const tipY = cy + Math.sin(rRad) * (R - 3);
+  const side = 5, perp = rRad + Math.PI/2;
+  ctx.beginPath();
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(tipX + Math.cos(rRad+Math.PI)*11 + Math.cos(perp)*side, tipY + Math.sin(rRad+Math.PI)*11 + Math.sin(perp)*side);
+  ctx.lineTo(tipX + Math.cos(rRad+Math.PI)*11 - Math.cos(perp)*side, tipY + Math.sin(rRad+Math.PI)*11 - Math.sin(perp)*side);
+  ctx.closePath();
+  ctx.fillStyle = '#ffaa00'; ctx.fill();
+
+  // yaw heading at bottom
+  ctx.fillStyle = 'rgba(3,7,16,0.75)';
+  ctx.fillRect(cx - 26, H - 17, 52, 14);
+  ctx.strokeStyle = 'rgba(0,212,255,0.4)'; ctx.lineWidth = 0.5;
+  ctx.strokeRect(cx - 26, H - 17, 52, 14);
+  ctx.fillStyle = '#00ff88';
+  ctx.font = '700 9px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(yaw.toFixed(1) + '°', cx, H - 7);
+}
+
+
+// ═══════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════
 buildServoList();
@@ -1635,7 +1760,10 @@ loadIKCfg();
 loadGearSpeeds();
 updateCartUI();
 setCtrlMode(CTRL.JOINT);
+drawIMUAH();
+fitUIRoot();
 window.addEventListener('load', () => {
   setTimeout(connectWS, 400);
   buildPostureCfgUI();
+  fitUIRoot();
 });

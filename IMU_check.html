@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>BWT901CL — IMU Test</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap');
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --bg:#060810;--bg2:#0a0d18;--surface:#0d1120;--surface2:#111828;
+  --border:#1c2a42;--border2:#243555;
+  --accent:#00d4ff;--accent2:#0099cc;--accent-d:#005577;
+  --ok:#00ff88;--warn:#ffaa00;--danger:#ff3355;
+  --text:#b8cce0;--text-dim:#3d5570;--text-hi:#e8f4ff;
+  --mono:'Share Tech Mono',monospace;--head:'Orbitron',sans-serif;
+}
+
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:13px;overflow-x:hidden}
+
+body::before{content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.04) 2px,rgba(0,0,0,0.04) 4px)}
+
+#app{max-width:960px;margin:0 auto;padding:16px}
+
+/* ── header ── */
+header{display:flex;align-items:center;gap:12px;padding:0 0 14px;border-bottom:1px solid var(--border2)}
+header h1{font-family:var(--head);font-size:15px;font-weight:900;letter-spacing:3px;color:var(--text-hi)}
+header h1 span{color:var(--accent)}
+.badge{font-family:var(--head);font-size:8px;font-weight:700;letter-spacing:1px;padding:3px 9px;
+  border-radius:20px;border:1px solid}
+.badge.ok{color:var(--ok);border-color:#00ff8855;background:#00ff8812}
+.badge.err{color:var(--danger);border-color:#ff335555;background:#ff335512}
+.badge.idle{color:var(--text-dim);border-color:var(--border2);background:var(--bg2)}
+
+/* ── connection bar ── */
+#conn-bar{display:flex;gap:8px;align-items:center;margin:14px 0;flex-wrap:wrap}
+.lbl{font-family:var(--head);font-size:9px;font-weight:700;letter-spacing:1px;color:var(--text-dim)}
+input.port-in{background:var(--bg2);border:1px solid var(--border2);color:var(--accent);
+  font-family:var(--mono);font-size:12px;padding:5px 10px;border-radius:5px;width:100px;
+  transition:border-color .2s}
+input.port-in:focus{outline:none;border-color:var(--accent)}
+select.baud-sel{background:var(--bg2);border:1px solid var(--border2);color:var(--text);
+  font-family:var(--mono);font-size:12px;padding:5px 8px;border-radius:5px;cursor:pointer}
+.btn{font-family:var(--head);font-size:9px;font-weight:700;letter-spacing:1.5px;
+  padding:6px 16px;border-radius:5px;cursor:pointer;border:1px solid;transition:all .15s}
+.btn-connect{background:linear-gradient(135deg,var(--accent-d),#003344);border-color:var(--accent2);color:var(--accent)}
+.btn-connect:hover{background:var(--accent2);color:#fff}
+.btn-disconnect{background:#160a0d;border-color:var(--danger);color:var(--danger)}
+.btn-clear{background:var(--surface2);border-color:var(--border2);color:var(--text-dim)}
+.btn-clear:hover{border-color:var(--warn);color:var(--warn)}
+.btn-save{background:#051a10;border-color:var(--ok);color:var(--ok)}
+.btn-save:hover{background:#083820}
+
+/* ── main grid ── */
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+@media(max-width:640px){.grid{grid-template-columns:1fr}}
+
+/* ── panels ── */
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;position:relative}
+.panel::before,.panel::after{content:'';position:absolute;width:10px;height:10px;
+  border-color:var(--accent2);border-style:solid;opacity:.4;pointer-events:none;z-index:1}
+.panel::before{top:4px;left:4px;border-width:1px 0 0 1px;border-radius:3px 0 0 0}
+.panel::after{bottom:4px;right:4px;border-width:0 1px 1px 0;border-radius:0 0 3px 0}
+.panel-head{font-family:var(--head);font-size:9px;font-weight:700;letter-spacing:2px;color:var(--text-dim);
+  padding:7px 12px 6px;border-bottom:1px solid var(--border);background:linear-gradient(to right,var(--surface2),var(--surface));
+  display:flex;align-items:center;gap:7px}
+.panel-head .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent)}
+.panel-body{padding:12px}
+
+/* ── RPY gauges ── */
+.rpy-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.axis-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 8px;text-align:center;transition:border-color .2s}
+.axis-card.active{border-color:var(--accent)}
+.axis-label{font-family:var(--head);font-size:8px;font-weight:700;letter-spacing:2px;color:var(--text-dim);margin-bottom:6px}
+.axis-val{font-family:var(--head);font-size:22px;font-weight:900;letter-spacing:1px;line-height:1;transition:color .2s}
+.axis-val.r{color:var(--danger)}
+.axis-val.p{color:var(--accent)}
+.axis-val.y{color:var(--ok)}
+.axis-unit{font-size:10px;color:var(--text-dim);margin-top:3px}
+
+/* ── bar gauge ── */
+.bar-wrap{height:6px;background:var(--bg);border-radius:20px;margin-top:8px;overflow:hidden;position:relative}
+.bar-wrap::after{content:'';position:absolute;left:50%;top:0;width:1px;height:100%;background:var(--border2)}
+.bar-fill{height:100%;border-radius:20px;transition:width .06s linear,margin-left .06s linear}
+
+/* ── 3D attitude indicator ── */
+#attitude-wrap{display:flex;align-items:center;justify-content:center;padding:12px}
+canvas#att{display:block}
+
+/* ── accel / gyro / temp ── */
+.sensor-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px}
+.sensor-box{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center}
+.sensor-key{font-family:var(--head);font-size:8px;letter-spacing:1px;color:var(--text-dim);margin-bottom:4px}
+.sensor-val{font-family:var(--head);font-size:13px;font-weight:700;color:var(--warn)}
+
+/* ── raw packet log ── */
+#log-box{background:var(--bg);border:1px solid var(--border);border-radius:6px;height:180px;
+  overflow-y:auto;padding:6px 8px;font-size:10px;font-family:var(--mono);color:var(--ok);
+  scroll-behavior:smooth}
+#log-box .err{color:var(--danger)}
+#log-box .warn{color:var(--warn)}
+#log-box .dim{color:var(--text-dim)}
+
+/* ── stats bar ── */
+.stats-bar{display:flex;gap:14px;flex-wrap:wrap;font-size:10px;font-family:var(--head);
+  color:var(--text-dim);letter-spacing:.5px;margin-top:8px}
+.stats-bar span b{color:var(--accent)}
+
+/* ── hz meter ── */
+.hz-meter{display:flex;align-items:center;gap:6px;margin-top:6px}
+.hz-val{font-family:var(--head);font-size:18px;font-weight:900;color:var(--amber,#ffaa00);min-width:50px}
+.hz-bar-wrap{flex:1;height:5px;background:var(--bg);border-radius:10px;overflow:hidden}
+.hz-bar{height:100%;background:var(--warn);border-radius:10px;transition:width .3s}
+
+/* ── checksum ring ── */
+.chk-ring{display:flex;gap:2px;margin-top:6px;flex-wrap:wrap}
+.chk-dot{width:8px;height:8px;border-radius:50%;background:var(--border2);transition:background .1s}
+.chk-dot.ok{background:var(--ok)}
+.chk-dot.err{background:var(--danger)}
+
+/* footer */
+footer{text-align:center;color:var(--text-dim);font-size:10px;padding:14px 0;border-top:1px solid var(--border);margin-top:6px}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <h1>BWT901CL&nbsp;<span>IMU</span>&nbsp;TEST</h1>
+    <span class="badge idle" id="badge-conn">DISCONNECTED</span>
+    <span class="badge idle" id="badge-pkt">0 PKT</span>
+    <div style="flex:1"></div>
+    <span style="font-size:10px;color:var(--text-dim)">rescue<span style="color:var(--accent)">bot</span> ● imu tester</span>
+  </header>
+
+  <!-- connection bar -->
+  <div id="conn-bar">
+    <span class="lbl">PORT</span>
+    <input class="port-in" id="portIn" value="COM5" placeholder="COM5" />
+    <span class="lbl">BAUD</span>
+    <select class="baud-sel" id="baudSel">
+      <option value="9600">9600</option>
+      <option value="115200" selected>115200</option>
+      <option value="460800">460800</option>
+    </select>
+    <button class="btn btn-connect" id="btnConnect" onclick="toggleConnect()">⚡ CONNECT</button>
+    <button class="btn btn-clear" onclick="clearLog()">✕ CLEAR LOG</button>
+    <button class="btn btn-save" id="btnSave" onclick="saveLog()" disabled>⬇ SAVE LOG</button>
+    <span style="font-size:10px;color:var(--text-dim);margin-left:4px">ต้องใช้ Chrome / Edge ที่รองรับ Web Serial API</span>
+  </div>
+
+  <!-- RPY big numbers + attitude -->
+  <div class="grid">
+    <div class="panel">
+      <div class="panel-head"><span class="dot"></span>ATTITUDE — ROLL / PITCH / YAW</div>
+      <div class="panel-body">
+        <div class="rpy-grid">
+          <div class="axis-card" id="card-r">
+            <div class="axis-label">ROLL</div>
+            <div class="axis-val r" id="val-r">—</div>
+            <div class="axis-unit">degrees</div>
+            <div class="bar-wrap"><div class="bar-fill" id="bar-r" style="background:var(--danger);width:50%;margin-left:0"></div></div>
+          </div>
+          <div class="axis-card" id="card-p">
+            <div class="axis-label">PITCH</div>
+            <div class="axis-val p" id="val-p">—</div>
+            <div class="axis-unit">degrees</div>
+            <div class="bar-wrap"><div class="bar-fill" id="bar-p" style="background:var(--accent);width:50%;margin-left:0"></div></div>
+          </div>
+          <div class="axis-card" id="card-y">
+            <div class="axis-label">YAW</div>
+            <div class="axis-val y" id="val-y">—</div>
+            <div class="axis-unit">degrees</div>
+            <div class="bar-wrap"><div class="bar-fill" id="bar-y" style="background:var(--ok);width:50%;margin-left:0"></div></div>
+          </div>
+        </div>
+        <div class="stats-bar">
+          <span>FREQ <b id="stat-hz">0</b> Hz</span>
+          <span>PKT <b id="stat-pkt">0</b></span>
+          <span>ERR <b id="stat-err" style="color:var(--danger)">0</b></span>
+          <span>TEMP <b id="stat-temp">—</b> °C</span>
+        </div>
+        <div class="chk-ring" id="chk-ring"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><span class="dot" style="background:var(--warn)"></span>ARTIFICIAL HORIZON</div>
+      <div id="attitude-wrap">
+        <canvas id="att" width="220" height="220"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- accel / gyro -->
+  <div class="grid" style="margin-bottom:10px">
+    <div class="panel">
+      <div class="panel-head"><span class="dot" style="background:var(--ok)"></span>ACCELERATION (g)</div>
+      <div class="panel-body">
+        <div class="sensor-grid">
+          <div class="sensor-box"><div class="sensor-key">Ax</div><div class="sensor-val" id="ax">—</div></div>
+          <div class="sensor-box"><div class="sensor-key">Ay</div><div class="sensor-val" id="ay">—</div></div>
+          <div class="sensor-box"><div class="sensor-key">Az</div><div class="sensor-val" id="az">—</div></div>
+        </div>
+        <div class="sensor-grid">
+          <div class="sensor-box"><div class="sensor-key">Wx (°/s)</div><div class="sensor-val" id="wx" style="color:var(--accent)">—</div></div>
+          <div class="sensor-box"><div class="sensor-key">Wy (°/s)</div><div class="sensor-val" id="wy" style="color:var(--accent)">—</div></div>
+          <div class="sensor-box"><div class="sensor-key">Wz (°/s)</div><div class="sensor-val" id="wz" style="color:var(--accent)">—</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><span class="dot" style="background:var(--danger)"></span>RAW PACKET LOG</div>
+      <div class="panel-body" style="padding:8px">
+        <div id="log-box"><span class="dim">[ รอการเชื่อมต่อ... ]</span></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<footer>BWT901CL IMU Tester · Web Serial API · 0x55 protocol · rescuebot</footer>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════
+let port = null, reader = null;
+let pktCount = 0, errCount = 0;
+let roll = 0, pitch = 0, yaw = 0;
+let ax = 0, ay = 0, az = 0;
+let wx = 0, wy = 0, wz = 0;
+let temp = 0;
+let logLines = [];
+let hz = 0;
+let _pktLast = 0, _pktThisSecond = 0, _hzTimer = null;
+let _chkHistory = [];
+
+// ═══════════════════════════════════════════════════════
+//  WEB SERIAL
+// ═══════════════════════════════════════════════════════
+async function toggleConnect() {
+  if (port) {
+    await disconnect();
+  } else {
+    await connect();
+  }
+}
+
+async function connect() {
+  if (!('serial' in navigator)) {
+    addLog('❌ เบราว์เซอร์ไม่รองรับ Web Serial API — ใช้ Chrome หรือ Edge', 'err');
+    return;
+  }
+  try {
+    port = await navigator.serial.requestPort();
+    const baud = parseInt(document.getElementById('baudSel').value);
+    await port.open({ baudRate: baud });
+    setStatus(true);
+    addLog(`✓ เชื่อมต่อสำเร็จ — baud ${baud}`, 'ok');
+    document.getElementById('btnConnect').textContent = '✕ DISCONNECT';
+    document.getElementById('btnSave').disabled = false;
+    startHzMeter();
+    readLoop();
+  } catch (e) {
+    addLog('❌ ' + e.message, 'err');
+    port = null;
+  }
+}
+
+async function disconnect() {
+  try {
+    if (reader) { await reader.cancel(); reader = null; }
+    if (port)   { await port.close();   port = null; }
+  } catch(e) {}
+  setStatus(false);
+  stopHzMeter();
+  document.getElementById('btnConnect').textContent = '⚡ CONNECT';
+  addLog('ตัดการเชื่อมต่อ', 'warn');
+}
+
+function setStatus(ok) {
+  const b = document.getElementById('badge-conn');
+  b.textContent = ok ? 'CONNECTED' : 'DISCONNECTED';
+  b.className = 'badge ' + (ok ? 'ok' : 'err');
+}
+
+// ═══════════════════════════════════════════════════════
+//  READ LOOP — parse 0x55 packets
+// ═══════════════════════════════════════════════════════
+async function readLoop() {
+  let buf = new Uint8Array(0);
+  try {
+    reader = port.readable.getReader();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      // append
+      const merged = new Uint8Array(buf.length + value.length);
+      merged.set(buf); merged.set(value, buf.length);
+      buf = merged;
+
+      // scan for 0x55 packets (11 bytes each)
+      while (buf.length >= 11) {
+        let idx = -1;
+        for (let i = 0; i <= buf.length - 2; i++) {
+          if (buf[i] === 0x55 && (buf[i+1] === 0x51 || buf[i+1] === 0x52 || buf[i+1] === 0x53)) {
+            idx = i; break;
+          }
+        }
+        if (idx === -1) { buf = buf.slice(Math.max(0, buf.length - 1)); break; }
+        if (idx > 0)    { buf = buf.slice(idx); }
+        if (buf.length < 11) break;
+
+        const pkt = buf.slice(0, 11);
+        buf = buf.slice(11);
+
+        // checksum
+        let chk = 0;
+        for (let i = 0; i < 10; i++) chk = (chk + pkt[i]) & 0xFF;
+        const ok = chk === pkt[10];
+        _chkHistory.push(ok);
+        if (_chkHistory.length > 20) _chkHistory.shift();
+
+        if (!ok) {
+          errCount++;
+          addLog(`CHK ERR pkt=0x${pkt[1].toString(16).toUpperCase()} got=${pkt[10].toString(16)} exp=${chk.toString(16)}`, 'err');
+          updateChkRing();
+          continue;
+        }
+
+        pktCount++;
+        _pktThisSecond++;
+        parsePacket(pkt);
+        logPacket(pkt, ok);
+        updateUI();
+        updateChkRing();
+
+        document.getElementById('badge-pkt').textContent = pktCount + ' PKT';
+        document.getElementById('badge-pkt').className = 'badge ok';
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') addLog('❌ read error: ' + e.message, 'err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  PACKET PARSER
+// ═══════════════════════════════════════════════════════
+function int16le(buf, offset) {
+  const lo = buf[offset], hi = buf[offset+1];
+  const v = (hi << 8) | lo;
+  return v > 32767 ? v - 65536 : v;
+}
+
+function parsePacket(p) {
+  const type = p[1];
+  if (type === 0x51) {
+    // acceleration
+    ax = int16le(p, 2) / 32768.0 * 16.0;
+    ay = int16le(p, 4) / 32768.0 * 16.0;
+    az = int16le(p, 6) / 32768.0 * 16.0;
+    temp = int16le(p, 8) / 100.0;
+  } else if (type === 0x52) {
+    // angular velocity
+    wx = int16le(p, 2) / 32768.0 * 2000.0;
+    wy = int16le(p, 4) / 32768.0 * 2000.0;
+    wz = int16le(p, 6) / 32768.0 * 2000.0;
+  } else if (type === 0x53) {
+    // angle
+    roll  = int16le(p, 2) / 32768.0 * 180.0;
+    pitch = int16le(p, 4) / 32768.0 * 180.0;
+    yaw   = int16le(p, 6) / 32768.0 * 180.0;
+    temp  = int16le(p, 8) / 340.0 + 36.53;
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  UI UPDATE
+// ═══════════════════════════════════════════════════════
+function fmt(v) { return (v >= 0 ? '+' : '') + v.toFixed(2); }
+
+function updateUI() {
+  // RPY values
+  document.getElementById('val-r').textContent = fmt(roll);
+  document.getElementById('val-p').textContent = fmt(pitch);
+  document.getElementById('val-y').textContent = fmt(yaw);
+
+  // bars: map -180..+180 → 0..100%, center at 50%
+  function barStyle(deg, color) {
+    const frac = deg / 180.0;   // -1..+1
+    const half = Math.abs(frac) * 50;
+    if (frac >= 0) return { w: half, ml: 50 };
+    return { w: half, ml: 50 - half };
+  }
+  const br = barStyle(roll);
+  const bp = barStyle(pitch);
+  const by = barStyle(yaw);
+  const rb = document.getElementById('bar-r');
+  const pb = document.getElementById('bar-p');
+  const yb = document.getElementById('bar-y');
+  rb.style.width = br.w + '%'; rb.style.marginLeft = br.ml + '%';
+  pb.style.width = bp.w + '%'; pb.style.marginLeft = bp.ml + '%';
+  yb.style.width = by.w + '%'; yb.style.marginLeft = by.ml + '%';
+
+  // accel / gyro
+  document.getElementById('ax').textContent = fmt(ax);
+  document.getElementById('ay').textContent = fmt(ay);
+  document.getElementById('az').textContent = fmt(az);
+  document.getElementById('wx').textContent = fmt(wx);
+  document.getElementById('wy').textContent = fmt(wy);
+  document.getElementById('wz').textContent = fmt(wz);
+
+  // stats
+  document.getElementById('stat-pkt').textContent  = pktCount;
+  document.getElementById('stat-err').textContent  = errCount;
+  document.getElementById('stat-temp').textContent = temp.toFixed(1);
+  document.getElementById('stat-hz').textContent   = hz.toFixed(0);
+
+  drawAH();
+}
+
+// ═══════════════════════════════════════════════════════
+//  ARTIFICIAL HORIZON CANVAS
+// ═══════════════════════════════════════════════════════
+function drawAH() {
+  const canvas = document.getElementById('att');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const cx = W/2, cy = H/2, R = W/2 - 8;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.clip();
+
+  // sky / ground with pitch offset
+  const pitchPx = (pitch / 90) * R;
+  const rollRad  = roll  * Math.PI / 180;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-rollRad);
+
+  // sky
+  ctx.fillStyle = '#051830';
+  ctx.fillRect(-R, -R*2 + pitchPx, R*2, R*2);
+  // ground
+  ctx.fillStyle = '#1a0a00';
+  ctx.fillRect(-R, pitchPx, R*2, R*2);
+  // horizon line
+  ctx.strokeStyle = '#ffaa00';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-R, pitchPx); ctx.lineTo(R, pitchPx);
+  ctx.stroke();
+
+  // pitch lines
+  for (let deg = -30; deg <= 30; deg += 10) {
+    if (deg === 0) continue;
+    const y = pitchPx - (deg / 90) * R;
+    const len = deg % 20 === 0 ? 40 : 22;
+    ctx.strokeStyle = 'rgba(0,212,255,0.5)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(-len/2, y); ctx.lineTo(len/2, y);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(0,212,255,0.6)';
+    ctx.font = '9px "Share Tech Mono",monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(deg + '°', -len/2 - 4, y + 3);
+  }
+
+  ctx.restore();
+
+  // fixed aircraft reference
+  ctx.strokeStyle = '#00ff88';
+  ctx.lineWidth   = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(cx - 40, cy); ctx.lineTo(cx - 14, cy);
+  ctx.moveTo(cx + 14, cy); ctx.lineTo(cx + 40, cy);
+  ctx.moveTo(cx, cy - 8);  ctx.lineTo(cx, cy + 8);
+  ctx.stroke();
+  ctx.fillStyle = '#00ff88';
+  ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI*2); ctx.fill();
+
+  ctx.restore();
+
+  // border
+  ctx.strokeStyle = 'rgba(0,212,255,0.3)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.stroke();
+
+  // roll arc at top
+  const rollArcR = R + 4;
+  const markAngles = [-60,-45,-30,-20,-10,0,10,20,30,45,60];
+  markAngles.forEach(a => {
+    const rad = (a - 90) * Math.PI / 180;
+    const inner = rollArcR - (a===0?10:6);
+    ctx.strokeStyle = a===0 ? '#ffaa00' : 'rgba(0,212,255,0.5)';
+    ctx.lineWidth   = a===0 ? 2 : 0.8;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(rad)*inner,  cy + Math.sin(rad)*inner);
+    ctx.lineTo(cx + Math.cos(rad)*rollArcR, cy + Math.sin(rad)*rollArcR);
+    ctx.stroke();
+  });
+
+  // roll pointer (triangle)
+  const rRad = (roll - 90) * Math.PI / 180;
+  const tipX = cx + Math.cos(rRad) * (R - 4);
+  const tipY = cy + Math.sin(rRad) * (R - 4);
+  const side = 7;
+  const perp = rRad + Math.PI/2;
+  ctx.beginPath();
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(tipX + Math.cos(rRad+Math.PI)*16 + Math.cos(perp)*side,
+             tipY + Math.sin(rRad+Math.PI)*16 + Math.sin(perp)*side);
+  ctx.lineTo(tipX + Math.cos(rRad+Math.PI)*16 - Math.cos(perp)*side,
+             tipY + Math.sin(rRad+Math.PI)*16 - Math.sin(perp)*side);
+  ctx.closePath();
+  ctx.fillStyle = '#ffaa00'; ctx.fill();
+
+  // yaw heading at bottom
+  ctx.fillStyle = 'rgba(0,20,40,0.7)';
+  ctx.fillRect(cx - 34, H - 22, 68, 18);
+  ctx.strokeStyle = 'rgba(0,212,255,0.4)';
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(cx - 34, H - 22, 68, 18);
+  ctx.fillStyle = '#00ff88';
+  ctx.font = '700 11px "Orbitron",sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(yaw.toFixed(1) + '°', cx, H - 8);
+}
+
+// ═══════════════════════════════════════════════════════
+//  LOG
+// ═══════════════════════════════════════════════════════
+const PKT_NAMES = {0x51:'ACCEL', 0x52:'GYRO', 0x53:'ANGLE'};
+
+function logPacket(p, ok) {
+  const type = p[1];
+  const name = PKT_NAMES[type] || '??';
+  const hex  = Array.from(p).map(b => b.toString(16).padStart(2,'0').toUpperCase()).join(' ');
+  const ts   = new Date().toLocaleTimeString('th',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  let detail = '';
+  if (type === 0x53) detail = ` R:${fmt(roll)} P:${fmt(pitch)} Y:${fmt(yaw)}`;
+  if (type === 0x51) detail = ` Ax:${fmt(ax)} Ay:${fmt(ay)} Az:${fmt(az)}`;
+  if (type === 0x52) detail = ` Wx:${fmt(wx)} Wy:${fmt(wy)} Wz:${fmt(wz)}`;
+  addLog(`[${ts}] ${name} ${hex}${detail}`, ok ? 'ok' : 'err');
+}
+
+function addLog(msg, cls) {
+  const box = document.getElementById('log-box');
+  const div = document.createElement('div');
+  div.textContent = msg;
+  if (cls) div.className = cls;
+  box.appendChild(div);
+  logLines.push(msg);
+  while (box.children.length > 200) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('log-box').innerHTML = '<span class="dim">[ log cleared ]</span>';
+  logLines = [];
+  pktCount = 0; errCount = 0;
+  document.getElementById('badge-pkt').textContent = '0 PKT';
+}
+
+function saveLog() {
+  const blob = new Blob([logLines.join('\n')], {type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `imu_log_${Date.now()}.txt`;
+  a.click();
+}
+
+// ═══════════════════════════════════════════════════════
+//  CHECKSUM HISTORY RING
+// ═══════════════════════════════════════════════════════
+function updateChkRing() {
+  const ring = document.getElementById('chk-ring');
+  ring.innerHTML = '';
+  _chkHistory.forEach(ok => {
+    const d = document.createElement('div');
+    d.className = 'chk-dot ' + (ok ? 'ok' : 'err');
+    ring.appendChild(d);
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+//  HZ METER
+// ═══════════════════════════════════════════════════════
+function startHzMeter() {
+  _pktThisSecond = 0;
+  _hzTimer = setInterval(() => {
+    hz = _pktThisSecond;
+    _pktThisSecond = 0;
+    document.getElementById('stat-hz').textContent = hz;
+  }, 1000);
+}
+function stopHzMeter() {
+  clearInterval(_hzTimer);
+  hz = 0;
+}
+
+// ═══════════════════════════════════════════════════════
+//  INIT — draw blank horizon
+// ═══════════════════════════════════════════════════════
+drawAH();
+</script>
+</body>
+</html>

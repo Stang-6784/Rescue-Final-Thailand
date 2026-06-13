@@ -290,6 +290,9 @@ class RobotController:
             text = msg.get("text","")
             if text:
                 _push_ws({"type":"arm_log","data":text})  # ← แก้ bug indent
+        elif t == "imu":
+            # IMU จาก Pi (BWT901CL) → forward ตรงๆ ไป browser
+            _push_ws(msg)
 
     # ── Servo ────────────────────────────────────────────────
     def _servo_cmd(self, idx, angle):
@@ -645,6 +648,12 @@ def main():
     global _ws_ctrl, _ws_loop, _qr_worker
 
     if sys.platform == "win32":
+        # console Windows เป็น cp1252 — บังคับ stdout/stderr เป็น utf-8
+        # กัน UnicodeEncodeError ตอน print อักขระอย่าง → ใน banner/log
+        try: sys.stdout.reconfigure(encoding="utf-8")
+        except Exception: pass
+        try: sys.stderr.reconfigure(encoding="utf-8")
+        except Exception: pass
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     base = sys._MEIPASS if getattr(sys,"frozen",False) \

@@ -20,7 +20,7 @@ python rescue.py
 # Vision server: Flask on :5000 — RTSP camera, motion detection, QR scan, YOLO11 AI
 python app_yolo11.py
 
-# Standalone AK45 motor test client (host defaults to 192.168.1.100)
+# Standalone AK45 motor test client (host defaults to 192.168.1.111)
 python rescue_v2.py <PI_IP>
 ```
 
@@ -54,7 +54,7 @@ rescue.py also polls app_yolo11.py :5000/status for QR results (QRWorker)
 ## Conventions & gotchas
 
 - **Pi protocol is newline-delimited JSON** over a raw TCP socket on port 9000, both directions. Every command is `{"type": ..., ...}`. When adding a robot command, add it to `RobotController.handle_ws` and emit via `_send_pi`.
-- **Servo model is fixed at 8 joints** with parallel `SERVO_NAMES / DEFAULTS / MINS / MAXS` arrays. These constants are **duplicated** between `rescue.py` and `ui/script.js` — keep them in sync. All servo angles must go through `_sv_clamp(idx, v)`.
+- **Servo model is fixed at 8 joints** with parallel `SERVO_NAMES / SERVO_DEFAULTS / MINS / MAXS` arrays. These constants are **duplicated** between `rescue.py` and `ui/script.js` — keep them in sync. All servo angles must go through `_sv_clamp(idx, v)`.
 - **Joint index 5 (J6 Gripper) is special**: `_servo_cmd` translates it into `motor_grip` / `motor_reverse` motor commands instead of a raw `servo_set`.
 - **Postures**: `POSTURE_ANGLES` are built-ins; `CUSTOM_POSTURES` (F4–F9) are editable from the browser Settings UI via `save_custom_posture`. F2 `horizontal` and F7 `custom_2` send raw `GOTO` arm commands instead of per-joint angles.
 - Network addresses (`PI_IP`, `RTSP_URL`, ports) are hard-coded constants at the top of `rescue.py` and `app_yolo11.py` — these are the first things to edit for a new deployment.
