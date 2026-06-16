@@ -1,0 +1,62 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   robot3d.css — สไตล์ของหน้าแสดงโมเดล 3D (index_3d.html)
+   ออกแบบให้ canvas เต็มกรอบที่ฝัง (#mini-3d-wrap ใน control.html) เสมอ
+   ════════════════════════════════════════════════════════════════════════════ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { width: 100%; height: 100%; }
+body {
+    background: #0a0f16;
+    color: #f9fafb;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    overflow: hidden;
+}
+
+/* viewport ครอบ canvas — JS อ่าน clientWidth/Height จาก element นี้ */
+#viewport { position: relative; width: 100%; height: 100%; }
+#three-canvas { width: 100%; height: 100%; display: block; }
+
+/* ── overlay ระหว่างโหลด ── */
+#loading-overlay {
+    position: absolute; inset: 0; background: #0a0f16;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px; z-index: 10;
+}
+.spinner {
+    width: 38px; height: 38px;
+    border: 3px solid #243042; border-top-color: #ef4444;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.load-text   { color: #9ca3af; font-size: 13px; }
+.load-detail { color: #6b7280; font-size: 11px; }
+
+/* ── คำใบ้การควบคุมกล้อง ── */
+#camera-hint {
+    position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.5); backdrop-filter: blur(6px);
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 16px;
+    padding: 4px 12px; font-size: 10px; color: #7b8aa0;
+    pointer-events: none; white-space: nowrap;
+}
+
+/* ── แถบสถานะ IMU / WebSocket มุมบนซ้าย ── */
+#status-overlay {
+    position: absolute; top: 6px; left: 8px; z-index: 6;
+    font-family: Consolas, monospace; font-size: 10px; color: #9ca3af;
+    background: rgba(10,15,22,0.7); border: 1px solid #1f2937;
+    border-radius: 6px; padding: 3px 8px; pointer-events: none;
+    display: flex; align-items: center; gap: 8px;
+}
+#status-overlay span[id^="v"] { color: #e5e7eb; font-weight: 700; }
+#wsBadge { font-size: 12px; line-height: 1; }
+.ws-off   { color: #6b7280; }
+.ws-retry { color: #f59e0b; }
+.ws-on    { color: #34d399; text-shadow: 0 0 6px rgba(52,211,153,0.7); }
+.ws-err   { color: #f87171; }
+
+/* ── เมื่อฝังอยู่ใน iframe (control.html) ซ่อน UI ที่กินพื้นที่ในกรอบเล็ก ── */
+body.embedded #camera-hint   { display: none; }
+body.embedded #status-overlay {
+    top: 4px; left: 4px; font-size: 9px; padding: 2px 6px; gap: 6px;
+}

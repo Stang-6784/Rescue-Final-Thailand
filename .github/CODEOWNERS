@@ -8,12 +8,13 @@
 
 # โค้ด Python หลัก
 *.py                    @Stang-6784
+/src/                   @Stang-6784
 
-# ส่วนติดต่อผู้ใช้ (UI)
+# ส่วนติดต่อผู้ใช้ (UI) + โมเดล 3D
 /ui/                    @Stang-6784
 
-# โมเดล 3D และไฟล์โมเดล
-/models/                @Stang-6784
+# ส่วน YOLO / กล้อง
+"/AI Detection/"        @Stang-6784
 *.pt                    @Stang-6784
 
 # การตั้งค่าและ workflow ของ repo

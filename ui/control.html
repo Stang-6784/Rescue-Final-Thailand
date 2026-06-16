@@ -400,9 +400,14 @@
                     <span id="wheelStatus" style="color:var(--text-dim);font-size:9px;">IDLE</span>
                 </div>
             </div>
-            <div id="mini-3d-wrap" style="height:180px;">
-                <div id="mini-3d-label">烙 3D ROBOT</div>
-                <iframe src="index_3d.html" title="3D Robot" tabindex="-1"></iframe>
+            <!-- DOCK วิดเจ็ตล่างซ้าย: 3D robot + ที่เผื่อไว้สำหรับ Lidar/อื่น ๆ
+                 dock เลื่อนได้เอง (overflow-y:auto) → เพิ่มวิดเจ็ตใหม่แล้วไม่พังเลย์เอาต์ -->
+            <div id="left-dock">
+                <div id="mini-3d-wrap">
+                    <div id="mini-3d-label">🤖 3D ROBOT</div>
+                    <iframe src="index_3d.html" title="3D Robot" tabindex="-1"></iframe>
+                </div>
+                <!-- เพิ่มวิดเจ็ตในอนาคต (เช่น Lidar) ต่อท้ายตรงนี้ได้เลย -->
             </div>
         </div>
 

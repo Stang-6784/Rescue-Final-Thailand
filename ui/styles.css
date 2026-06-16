@@ -218,8 +218,14 @@
     /* ── STATUS row compact ── */
     #wheelStatus { font-family: var(--head); font-size: 10px; font-weight: 700; letter-spacing: 1px; padding: 1px 7px; border-radius: 20px; border: 1px solid var(--border); }
 
-    /* ── 3D robot compact — ขยับขึ้น ── */
-    #mini-3d-wrap { flex-shrink: 0; height: 180px; position: relative; border-top: 1px solid var(--border); overflow: hidden; background: #040608; }
+    /* ── DOCK วิดเจ็ตล่างซ้าย (3D robot + เผื่อ Lidar/อื่น ๆ ในอนาคต) ──
+       fixed-height per widget, dock เลื่อนได้เองเมื่อวิดเจ็ตรวมกันสูงเกิน
+       max-height → เพิ่มวิดเจ็ตใหม่แล้วเลย์เอาต์ไม่พัง ไม่ทับ panel-body ── */
+    #left-dock { flex-shrink: 0; display: flex; flex-direction: column;
+        max-height: 240px; overflow-y: auto; border-top: 1px solid var(--border); }
+
+    /* ── 3D robot compact — กรอบคงขนาดเดิม (สูง 180px ไม่เกิน window เดิม) ── */
+    #mini-3d-wrap { flex-shrink: 0; height: 180px; position: relative; overflow: hidden; background: #040608; }
     #mini-3d-wrap iframe { width: 100%; height: 100%; border: none; display: block; }
     #mini-3d-label { position: absolute; top: 5px; left: 7px; z-index: 5; font-family: var(--head); font-size: 7px; font-weight: 700; letter-spacing: 2px; color: var(--text-dim); background: rgba(4,6,8,0.85); padding: 2px 7px; border-radius: 20px; border: 1px solid var(--border); pointer-events: none; }
 
