@@ -53,8 +53,8 @@ const uint8_t NUM_SERVOS = 8;
 
 //                                      J1  J2  J3  J4  J5  Grip Flip-F Flip-R
 const uint8_t SERVO_PINS[NUM_SERVOS] = { 8,  9,  10,  5,  4,  3,    6,    7 };
-const int SERVO_MIN[NUM_SERVOS]  = { 50, 10,  0,  0,  0, 45, 45, 45 };
-const int SERVO_MAX[NUM_SERVOS]  = {150, 150, 180, 125, 180, 90, 160, 160 };
+const int SERVO_MIN[NUM_SERVOS]  = { 50, 10,  0,  0,  0, 45, 0, 0 };
+const int SERVO_MAX[NUM_SERVOS]  = {150, 150, 180, 125, 180, 90, 180, 180 };
 const int SERVO_HOME[NUM_SERVOS] = { 98, 90, 157, 90, 90, 70, 90, 90 };  // = POSTURE home
 PWMServo servos[NUM_SERVOS];
 int servoDeg[NUM_SERVOS];

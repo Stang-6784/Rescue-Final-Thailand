@@ -45,8 +45,8 @@ SERVO_NAMES = [
     "Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper","Flip-F","Flip-R"
 ]
 SERVO_DEFAULTS = [98, 90, 157, 90, 70, 90, 90, 90]
-SERVO_MINS     = [50,  10,   0,  0,  0, 45, 45, 45]
-SERVO_MAXS     = [150, 150, 180, 125, 180, 90, 160, 160]
+SERVO_MINS     = [50,  10,   0,  0,  0, 45, 0, 0]
+SERVO_MAXS     = [150, 150, 180, 125, 180, 90, 180, 180]
 
 GRIP_OPEN  = 70
 GRIP_CLOSE = 10
