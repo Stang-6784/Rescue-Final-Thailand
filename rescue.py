@@ -18,9 +18,9 @@ PI_TCP_PORT = 9000
 WS_PORT     = 8765
 HTTP_PORT   = 8766
 
-LINEAR_SPEED  = 0.3
-ANGULAR_SPEED = 0.8
-BASE_RPM      = 80
+LINEAR_SPEED  = 1.5 # was 0.3 (=30%). 1.0 = full throttle (assume 0..1 scale)
+ANGULAR_SPEED = 1.0 # was 0.8. ลดลงได้ถ้าเลี้ยวไวเกินคุมยาก
+BASE_RPM      = 150 # was 80. AK45-10 rated output = 150 RPM @24V
 
 STATE_PUSH_HZ    = 20
 WS_SEND_TIMEOUT  = 0.08
@@ -41,13 +41,11 @@ FLASK_BASE = "http://127.0.0.1:5000"   # ← แก้ IP ถ้า Flask อย
 # ═══════════════════════════════════════════════════════════════
 NUM_SERVOS = 8
 SERVO_NAMES = [
-    "J1 Shoulder","J2 Elbow","J3 Extend",
-    "J4 Wrist","J5 Tool","J6 Gripper",
-    "Flip-F","Flip-R",
+    "Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper","Flip-F","Flip-R"
 ]
-SERVO_DEFAULTS = [50, 130,  0, 90, 90, 70, 100, 100]
-SERVO_MINS     = [50,  10,  0,  0,  0, 10,  45,  45]
-SERVO_MAXS     = [150,130,180,125,180, 90, 160, 160]
+SERVO_DEFAULTS = [98, 90, 157, 90, 70, 90, 90, 90]
+SERVO_MINS     = [50,  10,   0,  0,  0, 45, 45, 45]
+SERVO_MAXS     = [150, 150, 180, 125, 180, 90, 160, 160]
 
 GRIP_OPEN  = 70
 GRIP_CLOSE = 10
@@ -56,7 +54,7 @@ GRIP_MID   = (GRIP_OPEN + GRIP_CLOSE) // 2
 HOME_Y, HOME_Z, HOME_P = 30.0, 18.0, 30.0
 
 POSTURE_ANGLES = {
-    "home":   [50, 130,  0,  90, 90, 70, 100, 100],
+    "home":   [98, 170, 157,  90, 90, 70,  90,  90],
     "guard":  [50, 130,  0,  90, 90, 70,  45, 150],
     "giraff": [50, 130,  0,  90, 90, 70,  57,  80],
     "stair":  [50,130, 90, 110, 90, 70, 160, 45],
@@ -253,6 +251,7 @@ class RobotController:
     # ── Send Loop ────────────────────────────────────────────
     def _send_loop(self):
         """ส่ง move_start ทุก 20ms พร้อม lin/ang ล่าสุด"""
+        _dbg_last = None
         while self._send_loop_running:
             key = self._current_key
             if key and not self.is_locked:
@@ -262,6 +261,13 @@ class RobotController:
                     "lin":  self.linear_speed,
                     "ang":  self.angular_speed,
                 })
+                # DEBUG ชั่วคราว: log เฉพาะตอน key/lin/ang เปลี่ยน (ไม่สแปม 50Hz)
+                _dbg = (key, round(self.linear_speed, 3), round(self.angular_speed, 3))
+                if _dbg != _dbg_last:
+                    self._log(f"[DBG] move_start → key:{key} lin:{self.linear_speed:.2f} ang:{self.angular_speed:.2f}")
+                    _dbg_last = _dbg
+            else:
+                _dbg_last = None
             time.sleep(0.02)  # 50Hz
 
     # ── Logging ──────────────────────────────────────────────
@@ -648,8 +654,6 @@ def main():
     global _ws_ctrl, _ws_loop, _qr_worker
 
     if sys.platform == "win32":
-        # console Windows เป็น cp1252 — บังคับ stdout/stderr เป็น utf-8
-        # กัน UnicodeEncodeError ตอน print อักขระอย่าง → ใน banner/log
         try: sys.stdout.reconfigure(encoding="utf-8")
         except Exception: pass
         try: sys.stderr.reconfigure(encoding="utf-8")
@@ -681,14 +685,14 @@ def main():
 
     def _open():
         time.sleep(1.2)
-        webbrowser.open(f"http://localhost:{HTTP_PORT}/ui/control.html")
+        webbrowser.open(f"http://localhost:{HTTP_PORT}/ui/index.html")
     threading.Thread(target=_open, daemon=True).start()
 
     print(f"\n{'='*64}")
     print("  RescueBot Windows Bridge + QR")
     print(f"  WS   → ws://localhost:{WS_PORT}")
-    print(f"  HTTP → http://localhost:{HTTP_PORT}/ui/control.html")
-    print(f"  Pi   → {PI_IP}:{PI_TCP_PORT}")
+    print(f"  HTTP → http://localhost:{HTTP_PORT}/ui/index.html")
+    print(f"  Pi   → {PI_IP}:{PI_TCP_PORT} (Control Center)")
     print(f"  RTSP → {RTSP_URL}")
     print(f"  Flask QR → {FLASK_BASE}")
     print(f"{'='*64}\n")

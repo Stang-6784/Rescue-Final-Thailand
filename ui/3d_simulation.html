@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RESQROBOT 3D Simulator</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #111827; color: #f9fafb;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            display: flex; height: 100vh; overflow: hidden;
+        }
+        #viewport { flex: 1; position: relative; }
+        #three-canvas { width: 100%; height: 100%; display: block; }
+
+        #camera-hint {
+            position: absolute; bottom: 16px; left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+            border: 1px solid rgba(255,255,255,0.08); border-radius: 20px;
+            padding: 6px 18px; font-size: 12px; color: #6b7280;
+            pointer-events: none; white-space: nowrap;
+        }
+        #loading-overlay {
+            position: absolute; inset: 0; background: #111827;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center; gap: 16px; z-index: 10;
+        }
+        .spinner {
+            width: 44px; height: 44px;
+            border: 3px solid #374151; border-top-color: #ef4444;
+            border-radius: 50%; animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        #sidebar {
+            width: 310px; background: #1f2937;
+            border-left: 1px solid #374151;
+            display: flex; flex-direction: column; overflow-y: auto;
+        }
+        .sidebar-header { padding: 18px 20px 14px; background: #111827; border-bottom: 1px solid #374151; }
+        .sidebar-header h1 { font-size: 17px; font-weight: 700; letter-spacing: 2px; }
+        .sidebar-header h1 .r { color: #ef4444; } .sidebar-header h1 .a { color: #3b82f6; }
+        .sidebar-header p { font-size: 11px; color: #6b7280; margin-top: 3px; }
+
+        .section { padding: 14px 18px; border-bottom: 1px solid #374151; }
+        .section-title {
+            font-size: 10px; font-weight: 700; color: #6b7280;
+            text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 12px;
+        }
+        .model-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: #9ca3af; }
+        .dot-tag { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+        .ok { color: #6ee7b7; } .err { color: #fca5a5; }
+
+        .mover-ctrl { margin-bottom: 16px; }
+        .mover-ctrl:last-child { margin-bottom: 0; }
+        .ctrl-label { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+        .ctrl-name { font-size: 12px; color: #d1d5db; display: flex; align-items: center; gap: 7px; }
+        .ctrl-angle { font-size: 17px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }
+
+        input[type="range"] {
+            width: 100%; height: 4px; -webkit-appearance: none;
+            background: #374151; border-radius: 2px; outline: none; cursor: pointer; margin-bottom: 6px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%; cursor: pointer;
+        }
+        .mover-foot { display: flex; align-items: center; gap: 8px; }
+        .mover-foot label { font-size: 10.5px; color: #6b7280; }
+        select {
+            padding: 4px 8px; background: #111827; border: 1px solid #374151;
+            border-radius: 5px; color: #d1d5db; font-size: 11px; outline: none; cursor: pointer;
+        }
+        select:focus { border-color: #3b82f6; }
+
+        .btn {
+            display: block; width: 100%; padding: 9px; border: none; border-radius: 6px;
+            font-size: 13px; font-weight: 500; cursor: pointer; transition: background 0.15s;
+        }
+        .btn-red { background: #ef4444; color: #fff; } .btn-red:hover { background: #dc2626; }
+        .btn-gray { background: #374151; color: #d1d5db; border: 1px solid #4b5563; } .btn-gray:hover { background: #4b5563; }
+        .btn + .btn { margin-top: 8px; }
+
+        input[type="text"] {
+            width: 100%; padding: 8px 10px; background: #111827; border: 1px solid #374151;
+            border-radius: 6px; color: #f9fafb; font-size: 12px; margin-bottom: 8px; outline: none;
+        }
+        input[type="text"]:focus { border-color: #3b82f6; }
+        .ws-badge { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 20px; font-size: 11px; margin-top: 8px; }
+        .ws-off { background: #1f2937; color: #6b7280; } .ws-on { background: #064e3b; color: #6ee7b7; } .ws-err { background: #450a0a; color: #fca5a5; }
+        .ws-dot { width: 6px; height: 6px; border-radius: 50%; }
+        .ws-off .ws-dot { background: #6b7280; } .ws-on .ws-dot { background: #6ee7b7; box-shadow: 0 0 5px #6ee7b7; } .ws-err .ws-dot { background: #fca5a5; }
+
+        code { font-family: Consolas, monospace; font-size: 10.5px; background: #111827; padding: 2px 5px; border-radius: 3px; color: #6ee7b7; display: inline-block; margin-top: 3px; }
+        .help { font-size: 11px; color: #4b5563; line-height: 1.8; margin-top: 6px; }
+
+        .pivot-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #d1d5db; cursor: pointer; margin-bottom: 12px; }
+        .pivot-toggle input { accent-color: #ec4899; cursor: pointer; }
+        .pivot-block { margin-bottom: 10px; }
+        .pivot-head { font-size: 11.5px; color: #d1d5db; margin-bottom: 5px; display: flex; align-items: center; gap: 6px; }
+        .xyz { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+        .xyz label { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #6b7280; }
+        input[type="number"] {
+            width: 100%; padding: 6px 6px; background: #111827; border: 1px solid #374151;
+            border-radius: 5px; color: #f9fafb; font-size: 12px; outline: none; font-variant-numeric: tabular-nums;
+        }
+        input[type="number"]:focus { border-color: #ec4899; }
+
+        /* ── Embedded mode (inside control.html's small 3D iframe) ──────────────
+           Hide the editor sidebar/overlays and show only the 3D view, fit to the
+           box. Elements stay in the DOM (just hidden) so all the JS keeps working
+           and the model still animates from WebSocket commands. */
+        html.embed, html.embed body { overflow: hidden; }
+        html.embed #sidebar     { display: none; }
+        html.embed #camera-hint { display: none; }
+        html.embed #loading-overlay div { font-size: 11px; text-align: center; padding: 0 8px; }
+    </style>
+    <script>
+        /* Detect iframe embedding (e.g. control.html). Cross-origin access to
+           window.top throws — in that case assume we are embedded. */
+        (function () {
+            var embedded = true;
+            try { embedded = (window.self !== window.top); } catch (e) { embedded = true; }
+            if (embedded) document.documentElement.classList.add('embed');
+        })();
+    </script>
+</head>
+<body>
+
+<div id="viewport">
+    <canvas id="three-canvas"></canvas>
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <div style="color:#9ca3af;font-size:14px">กำลังโหลดหุ่นยนต์ทั้งตัว...</div>
+        <div id="load-detail" style="color:#6b7280;font-size:12px">รอสักครู่ (มีไฟล์ใหญ่หลายชิ้น)</div>
+    </div>
+    <div id="camera-hint">คลิกลาก: หมุนกล้อง &nbsp;·&nbsp; Scroll: ซูม &nbsp;·&nbsp; คลิกขวาลาก: เลื่อน</div>
+</div>
+
+<div id="sidebar">
+    <div class="sidebar-header">
+        <h1><span class="r">RESQ</span><span class="a">ROBOT</span></h1>
+        <p>Base + Flippers + 4-Joint Arm</p>
+    </div>
+
+    <div class="section">
+        <div class="section-title">สถานะชิ้นส่วน</div>
+        <div id="part-status"></div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">🔻 Flippers (ตีนตะขาบ)</div>
+        <div id="flipper-controls"></div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">🦾 แขนกล (Arm Joints)</div>
+        <div id="arm-controls"></div>
+    </div>
+
+    <div class="section">
+        <button class="btn btn-gray" onclick="RESQROBOT.reset()">รีเซ็ตทุกข้อต่อ (0°)</button>
+    </div>
+
+    <!-- Arm mount offset -->
+    <div class="section">
+        <div class="section-title">📍 ตำแหน่งติดตั้งแขน (Arm Mount)</div>
+        <div class="pivot-head" style="margin-bottom:4px">เลื่อน (position)</div>
+        <div class="xyz">
+            <label>X<input type="number" id="mount-x" step="5" value="0" autocomplete="off" oninput="applyMount()"></label>
+            <label>Y<input type="number" id="mount-y" step="5" value="0" autocomplete="off" oninput="applyMount()"></label>
+            <label>Z<input type="number" id="mount-z" step="5" value="0" autocomplete="off" oninput="applyMount()"></label>
+        </div>
+        <div class="pivot-head" style="margin:8px 0 4px">หมุน (rotation °)</div>
+        <div class="xyz">
+            <label>X<input type="number" id="mount-rx" step="15" value="0" autocomplete="off" oninput="applyMount()"></label>
+            <label>Y<input type="number" id="mount-ry" step="15" value="0" autocomplete="off" oninput="applyMount()"></label>
+            <label>Z<input type="number" id="mount-rz" step="15" value="0" autocomplete="off" oninput="applyMount()"></label>
+        </div>
+        <div class="pivot-head" style="margin:8px 0 4px">สเกล (scale)</div>
+        <input type="number" id="mount-s" step="0.1" value="1" autocomplete="off" oninput="applyMount()">
+        <div class="help" style="margin-top:6px">
+            ขยับ/หมุน/ย่อ ทั้งแขนไปวางบนฐานให้ตรงตามแบบ
+        </div>
+    </div>
+
+    <!-- Pivot editor -->
+    <div class="section">
+        <div class="section-title">ปรับจุดหมุน (Pivot Editor)</div>
+        <label class="pivot-toggle">
+            <input type="checkbox" id="show-pivot" onchange="togglePivotMarkers()">
+            แสดงจุดหมุน (ลูกบอลสีชมพู)
+        </label>
+        <div id="pivot-rows"></div>
+        <button class="btn btn-gray" onclick="logPivots()">📋 คัดลอกค่าจุดหมุน</button>
+    </div>
+
+    <div class="section">
+        <div class="section-title">WebSocket Integration</div>
+        <input type="text" id="ws-url" value="ws://localhost:8080" placeholder="ws://hostname:port" autocomplete="off">
+        <button class="btn btn-red" id="ws-btn" onclick="toggleWS()">เชื่อมต่อ</button>
+        <div class="ws-badge ws-off" id="ws-badge"><div class="ws-dot"></div><span id="ws-text">ไม่ได้เชื่อมต่อ</span></div>
+        <div class="help">
+            รับ JSON จากเว็บควบคุม:<br>
+            <code>{"front":45,"back":90,"j1":30,"j2":-45,"j3":60,"j4":0}</code>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">JavaScript API</div>
+        <div class="help">
+            <code>RESQROBOT.set("front", 45)</code><br>
+            <code>RESQROBOT.set("j1", 30)</code><br>
+            <code>RESQROBOT.getState()</code> · <code>RESQROBOT.reset()</code>
+        </div>
+    </div>
+</div>
+
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { STLLoader }     from 'three/addons/loaders/STLLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── Part definitions ─────────────────────────────────────────────────────────
+// base = the static body. movers = anything that rotates.
+//   parent: 'root'  → pivots under the base/world
+//           'mount' → pivots under the adjustable arm-mount group
+//           '<key>' → pivots under that mover (kinematic chain)
+//   dir   : rotation direction (+1 / -1); flippers mirror each other.
+const STL_DIR = '../models/';   // STL meshes live in repo-root models/ (served at /models/, this file at /ui/)
+const BASE = { url: 'RESQBASE_BASE.stl', color: 0x87CEEB };
+
+const MOVERS = [
+    { key:'front', label:'FRONT flipper', url:'RESQBASE_FRONT.stl', color:0xa855f7, css:'#ef4444', group:'flipper', parent:'root',  axis:'x', dir:-1, min:-90, max:90 },
+    { key:'back',  label:'BACK flipper',  url:'RESQBASE_BACK.stl',  color:0xa855f7, css:'#10b981', group:'flipper', parent:'root',  axis:'x', dir:-1, min:-90, max:90 },
+    { key:'j1',    label:'JOINT_1 (ฐานแขน)', url:'JOINT_1.stl', color:0x3b82f6, css:'#3b82f6', group:'arm', parent:'mount', axis:'y', dir:+1, min:-180, max:180 },
+    { key:'j2',    label:'JOINT_2',          url:'JOINT_2.stl', color:0x06b6d4, css:'#06b6d4', group:'arm', parent:'j1',    axis:'x', dir:+1, min:-180, max:180 },
+    { key:'j3',    label:'JOINT_3',          url:'JOINT_3.stl', color:0xf59e0b, css:'#f59e0b', group:'arm', parent:'j2',    axis:'x', dir:+1, min:-180, max:180 },
+    { key:'j4',    label:'JOINT_4 (ปลาย)',   url:'JOINT_4.stl', color:0xef4444, css:'#a855f7', group:'arm', parent:'j3',    axis:'x', dir:+1, min:-180, max:180 },
+];
+
+// ┌────────────────────────────────────────────────────────────────────────────┐
+// │ MANUAL OVERRIDES — leave null to auto-detect. Tune on screen, press 📋,      │
+// │ then paste. ARM_MOUNT shifts the whole arm onto the base.                    │
+// └────────────────────────────────────────────────────────────────────────────┘
+const MANUAL_HINGES = {
+  front: { x: 13, y: 15, z: 72 },
+  back: { x: 13, y: 15, z: -57 },
+  j1: { x: 12, y: -40, z: -341 },
+  j2: { x: 15, y: 22, z: -302 },
+  j3: { x: 15, y: 54, z: -480 },
+  j4: { x: 15, y: 60, z: -321 },
+};
+const ARM_MOUNT = { x: 0, y: 100, z: 400, rx: 0, ry: 0, rz: 0, s: 1 };
+
+// ── Renderer / scene ─────────────────────────────────────────────────────────
+const canvas = document.getElementById('three-canvas');
+const viewport = document.getElementById('viewport');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x111827);
+scene.add(new THREE.HemisphereLight(0x8eb1c7, 0x2d3748, 0.7));
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.4);
+sun.position.set(500, 800, 600); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+const sc = 1000; Object.assign(sun.shadow.camera, { left:-sc, right:sc, top:sc, bottom:-sc, near:1, far:5000 });
+scene.add(sun);
+const rim = new THREE.DirectionalLight(0x4466aa, 0.5); rim.position.set(-400, 200, -400); scene.add(rim);
+scene.add(new THREE.GridHelper(2000, 50, 0x1f2937, 0x1f2937));
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 40000);
+camera.position.set(700, 500, 700);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.06;
+controls.minDistance = 30; controls.maxDistance = 12000;
+
+// ── State ────────────────────────────────────────────────────────────────────
+const rootGroup = new THREE.Group(); scene.add(rootGroup);
+const armMount  = new THREE.Group(); rootGroup.add(armMount);
+let baseMesh = null;
+
+const state = {};   // key → { mesh, pivot, hinge, angle, axis, dir, marker, def }
+MOVERS.forEach(m => state[m.key] = { def: m, pivot: new THREE.Group(), hinge: new THREE.Vector3(), angle: 0, axis: m.axis, dir: m.dir, mesh: null, marker: null });
+let loaded = 0;
+const TOTAL = MOVERS.length + 1;   // +1 for the base
+
+// ── Build sidebar UI ─────────────────────────────────────────────────────────
+function buildUI() {
+    const statusBox = document.getElementById('part-status');
+    const flipBox = document.getElementById('flipper-controls');
+    const armBox  = document.getElementById('arm-controls');
+    const pivBox  = document.getElementById('pivot-rows');
+
+    statusBox.insertAdjacentHTML('beforeend',
+        `<div class="model-row"><div class="dot-tag" style="background:#6b7280"></div><span>BASE:&nbsp;</span><span id="status-base">กำลังโหลด...</span></div>`);
+
+    MOVERS.forEach(m => {
+        statusBox.insertAdjacentHTML('beforeend',
+            `<div class="model-row"><div class="dot-tag" style="background:${m.css}"></div><span>${m.label}:&nbsp;</span><span id="status-${m.key}">กำลังโหลด...</span></div>`);
+
+        const box = (m.group === 'flipper') ? flipBox : armBox;
+        box.insertAdjacentHTML('beforeend',
+            `<div class="mover-ctrl">
+                <div class="ctrl-label">
+                    <span class="ctrl-name"><span style="color:${m.css}">●</span> ${m.label}</span>
+                    <span class="ctrl-angle" id="${m.key}-val">0°</span>
+                </div>
+                <input type="range" id="${m.key}-range" min="${m.min}" max="${m.max}" value="0" step="1" autocomplete="off" style="accent-color:${m.css}">
+                <div class="mover-foot">
+                    <label>แกนหมุน</label>
+                    <select id="${m.key}-axis"><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
+                    <label style="margin-left:auto">${m.min}°…${m.max}°</label>
+                </div>
+             </div>`);
+
+        pivBox.insertAdjacentHTML('beforeend',
+            `<div class="pivot-block">
+                <div class="pivot-head"><span style="color:${m.css}">●</span> ${m.label}</div>
+                <div class="xyz">
+                    <label>X<input type="number" id="h-${m.key}-x" step="1" autocomplete="off"></label>
+                    <label>Y<input type="number" id="h-${m.key}-y" step="1" autocomplete="off"></label>
+                    <label>Z<input type="number" id="h-${m.key}-z" step="1" autocomplete="off"></label>
+                </div>
+             </div>`);
+    });
+
+    MOVERS.forEach(m => {
+        document.getElementById(`${m.key}-range`).addEventListener('input', e => setAngle(m.key, e.target.value));
+        const ax = document.getElementById(`${m.key}-axis`);
+        ax.value = state[m.key].axis;
+        ax.addEventListener('change', e => { state[m.key].axis = e.target.value; setAngle(m.key, state[m.key].angle); });
+        ['x','y','z'].forEach(c => document.getElementById(`h-${m.key}-${c}`).addEventListener('input', applyPivotUI));
+    });
+}
+buildUI();
+
+// ── Loading ──────────────────────────────────────────────────────────────────
+const loader = new STLLoader();
+function makeMat(color) { return new THREE.MeshPhysicalMaterial({ color, metalness: 0.4, roughness: 0.5 }); }
+
+loader.load(STL_DIR + BASE.url,
+    (geo) => { geo.computeVertexNormals(); baseMesh = new THREE.Mesh(geo, makeMat(BASE.color));
+        baseMesh.castShadow = baseMesh.receiveShadow = true;
+        document.getElementById('status-base').innerHTML = '<span class="ok">โหลดสำเร็จ ✓</span>';
+        loaded++; tryAssemble(); },
+    null,
+    () => { baseMesh = new THREE.Mesh(new THREE.BoxGeometry(300, 100, 500), makeMat(BASE.color));
+        document.getElementById('status-base').innerHTML = '<span class="err">โหลดไม่ได้ ✗</span>';
+        document.getElementById('load-detail').textContent = BASE.url + ' — ต้องรันผ่าน HTTP server';
+        loaded++; tryAssemble(); });
+
+MOVERS.forEach(m => {
+    loader.load(STL_DIR + m.url,
+        (geo) => { geo.computeVertexNormals(); const mesh = new THREE.Mesh(geo, makeMat(m.color));
+            mesh.castShadow = mesh.receiveShadow = true; state[m.key].mesh = mesh;
+            document.getElementById(`status-${m.key}`).innerHTML = '<span class="ok">โหลดสำเร็จ ✓</span>';
+            document.getElementById('load-detail').textContent = m.url + ' ✓';
+            loaded++; tryAssemble(); },
+        null,
+        () => { state[m.key].mesh = new THREE.Mesh(new THREE.BoxGeometry(80, 40, 120), makeMat(m.color));
+            document.getElementById(`status-${m.key}`).innerHTML = '<span class="err">โหลดไม่ได้ ✗</span>';
+            loaded++; tryAssemble(); });
+});
+
+// ── Assembly ─────────────────────────────────────────────────────────────────
+function tryAssemble() {
+    if (loaded < TOTAL) return;
+
+    baseMesh.geometry.computeBoundingBox();
+    autoHinges();
+    if (MANUAL_HINGES) MOVERS.forEach(m => { const h = MANUAL_HINGES[m.key]; if (h) state[m.key].hinge.set(h.x, h.y, h.z); });
+
+    rootGroup.add(baseMesh);
+
+    // Marker size relative to the whole robot
+    const union = baseMesh.geometry.boundingBox.clone();
+    MOVERS.forEach(m => { m_box(m); union.union(state[m.key].mesh.geometry.boundingBox); });
+    const markerR = Math.max(8, union.getSize(new THREE.Vector3()).length() * 0.008);
+    const markerGeo = new THREE.SphereGeometry(markerR, 20, 20);
+    const markerMat = new THREE.MeshBasicMaterial({ color: 0xec4899, depthTest: false, depthWrite: false });
+
+    MOVERS.forEach(m => {
+        const s = state[m.key];
+        s.pivot.add(s.mesh);
+        s.marker = new THREE.Mesh(markerGeo, markerMat);
+        s.marker.visible = false; s.marker.renderOrder = 999;
+        s.pivot.add(s.marker);
+        parentOf(m).add(s.pivot);
+    });
+
+    // seed the mount inputs from ARM_MOUNT, then position the arm-mount group
+    document.getElementById('mount-x').value = ARM_MOUNT.x;
+    document.getElementById('mount-y').value = ARM_MOUNT.y;
+    document.getElementById('mount-z').value = ARM_MOUNT.z;
+    document.getElementById('mount-rx').value = ARM_MOUNT.rx || 0;
+    document.getElementById('mount-ry').value = ARM_MOUNT.ry || 0;
+    document.getElementById('mount-rz').value = ARM_MOUNT.rz || 0;
+    document.getElementById('mount-s').value  = ARM_MOUNT.s  || 1;
+    applyMount();
+    rebuildChain();
+
+    // Sit on the grid
+    const bb = new THREE.Box3().setFromObject(rootGroup);
+    rootGroup.position.y = -bb.min.y;
+
+    fitCamera();
+    syncPivotUI();
+
+    // Clean defaults (ignore browser-restored slider/select on reload)
+    MOVERS.forEach(m => {
+        const r = document.getElementById(`${m.key}-range`);
+        const a = document.getElementById(`${m.key}-axis`);
+        r.value = r.defaultValue; a.value = m.axis; state[m.key].axis = m.axis;
+        setAngle(m.key, r.value);
+    });
+
+    document.getElementById('loading-overlay').style.display = 'none';
+}
+
+function m_box(m) { state[m.key].mesh.geometry.computeBoundingBox(); }
+
+// The Object3D a mover's pivot attaches to.
+function parentOf(m) {
+    if (m.parent === 'root')  return rootGroup;
+    if (m.parent === 'mount') return armMount;
+    return state[m.parent].pivot;
+}
+// The hinge of a mover's parent (zero for root/mount).
+function parentHinge(m) {
+    if (m.parent === 'root' || m.parent === 'mount') return new THREE.Vector3(0, 0, 0);
+    return state[m.parent].hinge;
+}
+
+// Auto-guess hinges. Flippers: the base face they sit closest to.
+// Arm joints: the overlap centre with the part they attach to (base for j1).
+function autoHinges() {
+    const bbOf = (mesh) => { mesh.geometry.computeBoundingBox(); return mesh.geometry.boundingBox.clone(); };
+    const centre = (b) => new THREE.Vector3((b.min.x+b.max.x)/2, (b.min.y+b.max.y)/2, (b.min.z+b.max.z)/2);
+    const baseBB = bbOf(baseMesh);
+
+    const overlapCentre = (a, b) => {
+        const lo = new THREE.Vector3(Math.max(a.min.x,b.min.x), Math.max(a.min.y,b.min.y), Math.max(a.min.z,b.min.z));
+        const hi = new THREE.Vector3(Math.min(a.max.x,b.max.x), Math.min(a.max.y,b.max.y), Math.min(a.max.z,b.max.z));
+        if (lo.x<=hi.x && lo.y<=hi.y && lo.z<=hi.z) return new THREE.Vector3((lo.x+hi.x)/2,(lo.y+hi.y)/2,(lo.z+hi.z)/2);
+        return centre(a).add(centre(b)).multiplyScalar(0.5);
+    };
+
+    MOVERS.forEach(m => {
+        const partBB = bbOf(state[m.key].mesh);
+        if (m.group === 'flipper') {
+            // hinge at the centre of the overlap with the base (the mounting face)
+            state[m.key].hinge.copy(overlapCentre(partBB, baseBB));
+        } else if (m.parent === 'mount') {
+            // arm root → overlap with base
+            state[m.key].hinge.copy(overlapCentre(partBB, baseBB));
+        } else {
+            // arm joint → overlap with the previous joint
+            state[m.key].hinge.copy(overlapCentre(partBB, bbOf(state[m.parent].mesh)));
+        }
+    });
+}
+
+// Recompute pivot/mesh offsets from hinges (handles flippers AND the chain).
+function rebuildChain() {
+    MOVERS.forEach(m => {
+        const s = state[m.key];
+        s.pivot.position.copy(s.hinge).sub(parentHinge(m));
+        s.mesh.position.copy(s.hinge).multiplyScalar(-1);
+    });
+}
+
+function fitCamera() {
+    const sph = new THREE.Sphere();
+    new THREE.Box3().setFromObject(rootGroup).getBoundingSphere(sph);
+    const r = sph.radius || 300;
+    camera.position.set(sph.center.x + r*2.0, sph.center.y + r*1.3, sph.center.z + r*2.0);
+    controls.target.copy(sph.center); controls.update();
+}
+
+// ── Rotation ─────────────────────────────────────────────────────────────────
+function setAngle(key, deg) {
+    const s = state[key];
+    const el = document.getElementById(`${key}-range`);
+    s.angle = Math.max(+el.min, Math.min(+el.max, +deg));
+    s.pivot.rotation.set(0, 0, 0);
+    s.pivot.rotation[s.axis] = THREE.MathUtils.degToRad(s.dir * s.angle);
+    el.value = s.angle;
+    document.getElementById(`${key}-val`).textContent = Math.round(s.angle) + '°';
+}
+
+// ── Arm mount + pivot editor ─────────────────────────────────────────────────
+window.applyMount = () => {
+    const v = id => parseFloat(document.getElementById(id).value) || 0;
+    const sc = parseFloat(document.getElementById('mount-s').value) || 1;
+    armMount.position.set(v('mount-x'), v('mount-y'), v('mount-z'));
+    armMount.rotation.set(THREE.MathUtils.degToRad(v('mount-rx')),
+                          THREE.MathUtils.degToRad(v('mount-ry')),
+                          THREE.MathUtils.degToRad(v('mount-rz')));
+    armMount.scale.set(sc, sc, sc);
+};
+
+function applyPivotUI() {
+    const v = id => parseFloat(document.getElementById(id).value) || 0;
+    MOVERS.forEach(m => state[m.key].hinge.set(v(`h-${m.key}-x`), v(`h-${m.key}-y`), v(`h-${m.key}-z`)));
+    rebuildChain();
+    MOVERS.forEach(m => setAngle(m.key, state[m.key].angle));
+}
+window.applyPivotUI = applyPivotUI;
+
+function syncPivotUI() {
+    MOVERS.forEach(m => {
+        const h = state[m.key].hinge;
+        document.getElementById(`h-${m.key}-x`).value = Math.round(h.x);
+        document.getElementById(`h-${m.key}-y`).value = Math.round(h.y);
+        document.getElementById(`h-${m.key}-z`).value = Math.round(h.z);
+    });
+}
+
+window.togglePivotMarkers = () => {
+    const on = document.getElementById('show-pivot').checked;
+    MOVERS.forEach(m => { if (state[m.key].marker) state[m.key].marker.visible = on; });
+};
+
+window.logPivots = () => {
+    const mv = id => parseFloat(document.getElementById(id).value) || 0;
+    let txt = 'const MANUAL_HINGES = {\n';
+    MOVERS.forEach(m => { const h = state[m.key].hinge; txt += `  ${m.key}: { x: ${Math.round(h.x)}, y: ${Math.round(h.y)}, z: ${Math.round(h.z)} },\n`; });
+    txt += '};\nconst ARM_MOUNT = { x: ' + mv('mount-x') + ', y: ' + mv('mount-y') + ', z: ' + mv('mount-z') +
+           ', rx: ' + mv('mount-rx') + ', ry: ' + mv('mount-ry') + ', rz: ' + mv('mount-rz') +
+           ', s: ' + (parseFloat(document.getElementById('mount-s').value) || 1) + ' };';
+    console.log('%c[RESQROBOT] paste into the script:', 'color:#ec4899;font-weight:bold');
+    console.log(txt);
+    alert('คัดลอกค่านี้ไปวางในโค้ด (ดู Console F12):\n\n' + txt);
+};
+
+// ── WebSocket / API ──────────────────────────────────────────────────────────
+let ws = null;
+window.toggleWS = () => {
+    if (ws && ws.readyState === WebSocket.OPEN) { ws.close(); return; }
+    const url = document.getElementById('ws-url').value.trim();
+    const btn = document.getElementById('ws-btn'), badge = document.getElementById('ws-badge'), text = document.getElementById('ws-text');
+    try {
+        ws = new WebSocket(url);
+        ws.onopen  = () => { badge.className='ws-badge ws-on';  text.textContent='เชื่อมต่อแล้ว';   btn.textContent='ตัดการเชื่อมต่อ'; };
+        ws.onclose = () => { badge.className='ws-badge ws-off'; text.textContent='ไม่ได้เชื่อมต่อ'; btn.textContent='เชื่อมต่อ'; };
+        ws.onerror = () => { badge.className='ws-badge ws-err'; text.textContent='เชื่อมต่อไม่ได้';  btn.textContent='เชื่อมต่อ'; };
+        ws.onmessage = (evt) => { try { applyCommand(JSON.parse(evt.data)); ws.send(JSON.stringify(getState())); } catch (_) {} };
+    } catch (_) { badge.className='ws-badge ws-err'; text.textContent='URL ไม่ถูกต้อง'; }
+};
+
+// ── Control-console adapter ────────────────────────────────────────────────
+// control.html (script.js) posts: { type:'state', angles:[8], selected }.
+// Map those 8 servo channels onto this robot's 6 movers.
+//   idx     : position in the angles[] array coming from control.html
+//   neutral : servo angle treated as this mover's 0° (rest pose) — subtracted
+//   invert  : set true if a joint turns the WRONG way in the sim
+// Servo order in control.html:
+//   0 J1 Shoulder · 1 J2 Elbow · 2 J3 Extend · 3 J4 Wrist
+//   4 J5 Tool · 5 J6 Gripper · 6 Flip-F · 7 Flip-R   (4,5 have no 3D mover)
+// >>> If a joint moves backwards, flip its `invert`. If its rest pose looks
+//     off-centre, adjust its `neutral`. Tune only this table. <<<
+const CONSOLE_MAP = {
+    j1:    { idx: 0, neutral: 98,  invert: false },
+    j2:    { idx: 1, neutral: 170, invert: true  },
+    j3:    { idx: 2, neutral: 157, invert: false },
+    j4:    { idx: 3, neutral: 90,  invert: false },
+    front: { idx: 6, neutral: 90,  invert: false },
+    back:  { idx: 7, neutral: 90,  invert: false },
+};
+
+function applyCommand(cmd) {
+    if (typeof cmd !== 'object' || !cmd) return;
+    // (a) control-console format: { type:'state', angles:[...] }
+    if (Array.isArray(cmd.angles)) {
+        for (const key in CONSOLE_MAP) {
+            const m = CONSOLE_MAP[key];
+            const raw = cmd.angles[m.idx];
+            if (raw == null) continue;
+            let deg = raw - m.neutral;
+            if (m.invert) deg = -deg;
+            setAngle(key, deg);
+        }
+        return;
+    }
+    // (b) direct format: { front, back, j1, j2, j3, j4 }
+    MOVERS.forEach(m => { if (cmd[m.key] !== undefined) setAngle(m.key, cmd[m.key]); });
+}
+window.addEventListener('message', (evt) => { try { applyCommand(evt.data); } catch (_) {} });
+
+function getState() {
+    const s = { ts: Date.now() };
+    MOVERS.forEach(m => s[m.key] = state[m.key].angle);
+    return s;
+}
+window.RESQROBOT = {
+    set: (key, deg) => { if (state[key]) setAngle(key, deg); },
+    getState,
+    reset: () => MOVERS.forEach(m => setAngle(m.key, 0)),
+    debug: () => MOVERS.map(m => ({ key: m.key, axis: state[m.key].axis, angle: state[m.key].angle,
+        hinge: { x: Math.round(state[m.key].hinge.x), y: Math.round(state[m.key].hinge.y), z: Math.round(state[m.key].hinge.z) } })),
+    // World-space bounding boxes (rounded) — used to work out arm placement.
+    bounds: () => {
+        const arr = v => v.toArray().map(Math.round);
+        const box = obj => { const b = new THREE.Box3().setFromObject(obj); return { min: arr(b.min), max: arr(b.max), size: arr(b.getSize(new THREE.Vector3())), c: arr(b.getCenter(new THREE.Vector3())) }; };
+        const r = { base: box(baseMesh), arm: box(armMount) };
+        MOVERS.forEach(m => r[m.key] = box(state[m.key].mesh));
+        return r;
+    },
+};
+
+// ── Resize / loop ────────────────────────────────────────────────────────────
+function resize() { const w = viewport.clientWidth, h = viewport.clientHeight; renderer.setSize(w, h); camera.aspect = w/h; camera.updateProjectionMatrix(); }
+window.addEventListener('resize', resize); resize();
+(function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
+</script>
+</body>
+</html>

@@ -1,3 +1,14 @@
+# ===== AI training artifacts =====
+AI_Trainng/runs/
+AI_Trainng/dataset/
+yolo11n.pt
+*.pt.tmp
+
+# ===== python =====
 __pycache__/
 *.pyc
-.vscode/
+.venv/
+venv/
+
+# ===== logs =====
+*.csv
