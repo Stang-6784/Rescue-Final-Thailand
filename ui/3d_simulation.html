@@ -242,7 +242,7 @@ const BASE = { url: 'RESQBASE_BASE.stl', color: 0x87CEEB };
 
 const MOVERS = [
     { key:'front', label:'FRONT flipper', url:'RESQBASE_FRONT.stl', color:0xa855f7, css:'#ef4444', group:'flipper', parent:'root',  axis:'x', dir:-1, min:-90, max:90 },
-    { key:'back',  label:'BACK flipper',  url:'RESQBASE_BACK.stl',  color:0xa855f7, css:'#10b981', group:'flipper', parent:'root',  axis:'x', dir:-1, min:-90, max:90 },
+    { key:'back',  label:'BACK flipper',  url:'RESQBASE_BACK.stl',  color:0xa855f7, css:'#10b981', group:'flipper', parent:'root',  axis:'x', dir:+1, min:-90, max:90 },
     { key:'j1',    label:'JOINT_1 (ฐานแขน)', url:'JOINT_1.stl', color:0x3b82f6, css:'#3b82f6', group:'arm', parent:'mount', axis:'y', dir:+1, min:-180, max:180 },
     { key:'j2',    label:'JOINT_2',          url:'JOINT_2.stl', color:0x06b6d4, css:'#06b6d4', group:'arm', parent:'j1',    axis:'x', dir:+1, min:-180, max:180 },
     { key:'j3',    label:'JOINT_3',          url:'JOINT_3.stl', color:0xf59e0b, css:'#f59e0b', group:'arm', parent:'j2',    axis:'x', dir:+1, min:-180, max:180 },

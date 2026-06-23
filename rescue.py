@@ -8,7 +8,7 @@ import asyncio
 import websockets
 import webbrowser
 import urllib.request
-from http.server import SimpleHTTPRequestHandler, HTTPServer
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 # ═══════════════════════════════════════════════════════════════
 #  Configuration
@@ -17,9 +17,10 @@ PI_IP       = "192.168.1.111"
 PI_TCP_PORT = 9000
 WS_PORT     = 8765
 HTTP_PORT   = 8766
+LIDAR_UDP_PORT = 8766   # Pi ยิง lidar (JSON) มาทาง UDP — คนละ protocol กับ HTTP จึงใช้พอร์ตเดียวกันได้
 
-LINEAR_SPEED  = 1.5 # was 0.3 (=30%). 1.0 = full throttle (assume 0..1 scale)
-ANGULAR_SPEED = 1.0 # was 0.8. ลดลงได้ถ้าเลี้ยวไวเกินคุมยาก
+LINEAR_SPEED  = 0.30 # เริ่มที่ gear 3 (ตรงกับ LIN_GEARS[2] ใน UI)
+ANGULAR_SPEED = 1.00 # เริ่มที่ gear 3 (ตรงกับ ANG_GEARS[2] ใน UI)
 BASE_RPM      = 150 # was 80. AK45-10 rated output = 150 RPM @24V
 
 STATE_PUSH_HZ    = 20
@@ -54,7 +55,7 @@ GRIP_MID   = (GRIP_OPEN + GRIP_CLOSE) // 2
 HOME_Y, HOME_Z, HOME_P = 30.0, 18.0, 30.0
 
 POSTURE_ANGLES = {
-    "home":   [98, 170, 157,  90, 90, 70,  90,  90],
+    "home":   [98, 90, 157,  90, 90, 70,  90,  90],
     "guard":  [50, 130,  0,  90, 90, 70,  45, 150],
     "giraff": [50, 130,  0,  90, 90, 70,  57,  80],
     "stair":  [50,130, 90, 110, 90, 70, 160, 45],
@@ -168,6 +169,37 @@ def _pi_connect_thread(ctrl):
                 if s: s.close()
             except: pass
             time.sleep(3)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  LIDAR (UDP) → Browser
+#  Pi ยิง lidar (JSON) มาทาง UDP :LIDAR_UDP_PORT
+#  รับมาแล้ว forward ตรงๆ ไป browser ผ่าน WS เดิม (เหมือน IMU)
+#  รูปแบบที่ map_panel.js รอรับ: {"type":"map","w":..,"h":..,"res":..,"data":[..]}
+# ═══════════════════════════════════════════════════════════════
+def _lidar_recv_thread(ctrl):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("0.0.0.0", LIDAR_UDP_PORT))
+    except Exception as e:
+        ctrl._log(f"[lidar] bind UDP :{LIDAR_UDP_PORT} ล้มเหลว: {e}")
+        return
+    ctrl._log(f"[lidar] ฟัง UDP :{LIDAR_UDP_PORT}")
+    while True:
+        try:
+            data, addr = sock.recvfrom(65535)   # 65535 = ขนาดสูงสุดของ UDP datagram
+        except Exception as e:
+            ctrl._log(f"[lidar] recv error: {e}")
+            time.sleep(0.5); continue
+        try:
+            msg = json.loads(data.decode("utf-8", errors="ignore"))
+        except Exception:
+            continue
+        if not isinstance(msg, dict):
+            continue
+        msg.setdefault("type", "map")   # default ให้ตรงกับ map_panel.js
+        _push_ws(msg)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -645,7 +677,9 @@ def _http_server(base):
         def log_message(self, *a):
             pass
 
-    HTTPServer(("0.0.0.0", HTTP_PORT), CORSHandler).serve_forever()
+    # ThreadingHTTPServer: เสิร์ฟหลาย request พร้อมกัน เพื่อให้หน้า control
+    # ขึ้นทันทีโดยไม่ต้องรอ iframe 3D ดูด STL ก้อนใหญ่ (~71MB) ให้เสร็จก่อน
+    ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), CORSHandler).serve_forever()
 
 # ═══════════════════════════════════════════════════════════════
 #  Main
@@ -671,6 +705,7 @@ def main():
 
     threading.Thread(target=_pi_connect_thread, args=(ctrl,), daemon=True).start()
     threading.Thread(target=_pi_recv_thread,    args=(ctrl,), daemon=True).start()
+    threading.Thread(target=_lidar_recv_thread, args=(ctrl,), daemon=True).start()
 
     if QR_ENABLE:
         _qr_worker = QRWorker(
@@ -693,6 +728,7 @@ def main():
     print(f"  WS   → ws://localhost:{WS_PORT}")
     print(f"  HTTP → http://localhost:{HTTP_PORT}/ui/index.html")
     print(f"  Pi   → {PI_IP}:{PI_TCP_PORT} (Control Center)")
+    print(f"  LIDAR→ UDP :{LIDAR_UDP_PORT}")
     print(f"  RTSP → {RTSP_URL}")
     print(f"  Flask QR → {FLASK_BASE}")
     print(f"{'='*64}\n")

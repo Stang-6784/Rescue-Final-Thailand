@@ -202,6 +202,7 @@ function connectWS() {
     retryDelay = 1000;
     st.textContent = '✓ CONNECTED'; st.className = 'connected';
     addLog('WebSocket connected', 'ok');
+    sendCmd({type:'set_speed', lin:state.lin_spd, ang:state.ang_spd}); // ส่ง gear ปัจจุบัน (เริ่มที่ G3)
     startPing();
   };
 
@@ -217,8 +218,8 @@ function connectWS() {
         if (msg.serial !== undefined)   applySerial(msg.serial);
         if (msg.heading !== undefined)  state.heading     = msg.heading;
         applyLRR(msg.lr ?? state.lr, msg.rr ?? state.rr);
-        if (msg.lin_spd !== undefined)  state.lin_spd = msg.lin_spd;
-        if (msg.ang_spd !== undefined)  state.ang_spd = msg.ang_spd;
+        // หมายเหตุ: ไม่รับ lin_spd/ang_spd จากเซิร์ฟเวอร์ — UI (ระบบเกียร์) เป็นเจ้าของค่าความเร็ว
+        // และส่งให้ Pi เอง การรับกลับมาจะทำให้ความเร็วทแยง (q/e/z/c) ถูกคูณซ้ำจนลดลงเรื่อยๆ
         if (ctrlMode !== CTRL.JOINT) updateCartUI();
       }
       if (msg.type === 'log_event') applyServerLog(msg.line);
@@ -875,8 +876,22 @@ function copyQRResult() {
 //  GEAR SPEED
 // ═══════════════════════════════════════
 let LIN_GEARS = [0.10, 0.20, 0.30, 0.50, 1.00];
-let ANG_GEARS = [0.20, 0.50, 1.00, 1.80, 2.50];
-let linGear = 2, angGear = 2;
+let ANG_GEARS = [0.20, 0.50, 1.00, 1.50, 2.50];
+let linGear = 3, angGear = 2;
+
+// ── ความเร็วทแยง q/e/z/c (w+a, w+d, s+a, s+d) แยกจาก w/a/s/d ──
+// เป็นตัวคูณกับความเร็วเกียร์ปัจจุบัน: 1.00 = เท่าเกียร์, <1 = ช้าลง, >1 = เร็วขึ้น
+let DIAG_LIN_FACTOR = 1.00   // ความเร็วเดินหน้า/ถอยของทแยง
+let DIAG_ANG_FACTOR = 0.6;   // ความเร็วหมุนของทแยง
+const DIAG_KEYS = new Set(['q','e','z','c']);
+// คืนค่า lin/ang สำหรับ moveKey — ใส่ตัวคูณทแยงให้ q/e/z/c เท่านั้น
+function moveSpeed(key) {
+  const diag = DIAG_KEYS.has(key);
+  return {
+    lin: +(state.lin_spd * (diag ? DIAG_LIN_FACTOR : 1)).toFixed(3),
+    ang: +(state.ang_spd * (diag ? DIAG_ANG_FACTOR : 1)).toFixed(3),
+  };
+}
 
 function _applyGearUI(prefix, activeGear) {
   for (let g=1; g<=5; g++) {
@@ -899,8 +914,13 @@ function setLinGear(g) {
   const valEl = document.getElementById('linVal');
   if (valEl) valEl.textContent = state.lin_spd.toFixed(2);
   _applyGearUI('lin', g);
+  // ผูก angular gear ให้ปรับตาม linear gear ไปพร้อมกัน
+  angGear = g; state.ang_spd = ANG_GEARS[g-1];
+  const aEl = document.getElementById('angVal');
+  if (aEl) aEl.textContent = state.ang_spd.toFixed(2);
+  _applyGearUI('ang', g);
   sendCmd({type:'set_speed', lin:state.lin_spd, ang:state.ang_spd});
-  addLog(`LINEAR G${g} → ${state.lin_spd.toFixed(2)} m/s`, 'ok', 'move');
+  addLog(`GEAR G${g} → lin ${state.lin_spd.toFixed(2)} m/s · ang ${state.ang_spd.toFixed(2)} r/s`, 'ok', 'move');
 }
 function setAngGear(g) {
   angGear = g; state.ang_spd = ANG_GEARS[g-1];
@@ -937,8 +957,8 @@ function computeMoveKey() {
   if (back && right) return 'c';  // s + d → เหมือนกด c
   if (fwd)   return 'w';
   if (back)  return 's';
-  if (left)  return 'd';          // กด a → ส่ง d (สลับทิศหมุน: มอเตอร์ขวา CW / ซ้าย CCW)
-  if (right) return 'a';          // กด d → ส่ง a (สลับทิศหมุน: มอเตอร์ซ้าย CW / ขวา CCW)
+  if (left)  return 'a';          // กด a → ส่ง a
+  if (right) return 'd';          // กด d → ส่ง d
   return null;
 }
 
@@ -952,8 +972,9 @@ function updateCardinalMovement() {
   if (newKey) {
     if (state.locked) { state.locked=false; sendCmd({type:'unlock'}); }
     state.active_keys.add(newKey);
-    sendCmd({type:'move_start', key:newKey, lin:state.lin_spd, ang:state.ang_spd});
-    addMoveLog(`▶ MOVE [${newKey.toUpperCase()}]  lin=${state.lin_spd} ang=${state.ang_spd}`, 'ok');
+    const sp = moveSpeed(newKey);
+    sendCmd({type:'move_start', key:newKey, lin:sp.lin, ang:sp.ang});
+    addMoveLog(`▶ MOVE [${newKey.toUpperCase()}]  lin=${sp.lin} ang=${sp.ang}`, 'ok');
   } else {
     addMoveLog('■ STOP', 'warn');
   }
@@ -1019,8 +1040,9 @@ function handleKeyDown(e) {
       if (state.locked) { state.locked=false; sendCmd({type:'unlock'}); }
       state.active_keys.add(moveKey);
       document.querySelector(`.btn[data-key="${moveKey}"]`)?.classList.add('pressed');
-      sendCmd({type:'move_start', key:moveKey, lin:state.lin_spd, ang:state.ang_spd});
-      addMoveLog(`▶ ${(KB_LABELS[action]?.label || moveKey).toUpperCase()} [${moveKey.toUpperCase()}]  lin=${state.lin_spd} ang=${state.ang_spd}`, 'ok');
+      const sp = moveSpeed(moveKey);
+      sendCmd({type:'move_start', key:moveKey, lin:sp.lin, ang:sp.ang});
+      addMoveLog(`▶ ${(KB_LABELS[action]?.label || moveKey).toUpperCase()} [${moveKey.toUpperCase()}]  lin=${sp.lin} ang=${sp.ang}`, 'ok');
       renderAll();
     }
     return;
@@ -1697,7 +1719,7 @@ function resetGearSpeeds() {
   LIN_GEARS.splice(0, 5, ...GEAR_DEFAULTS.lin);
   ANG_GEARS.splice(0, 5, ...GEAR_DEFAULTS.ang);
   try { localStorage.removeItem('rescuebot_gears'); } catch(e){}
-  setLinGear(2); setAngGear(2);
+  setLinGear(3);
   _syncGearInputs();
   addLog('Gear speeds reset', 'warn');
 }
@@ -1829,6 +1851,7 @@ loadPostureNames();
 loadTheme();
 loadIKCfg();
 loadGearSpeeds();
+setLinGear(3);   // เริ่มต้นที่ gear 3 (lin + ang พร้อมกัน)
 updateCartUI();
 setCtrlMode(CTRL.JOINT);
 drawIMUAH();
