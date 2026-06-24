@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════
 const SERVO_NAMES    = ["Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper","Flip-F","Flip-R"];
 const SERVO_KEYS_MAP = ['y','u','i','o','h','j','k','l'];
-const SERVO_DEFAULTS = [ 98, 150, 157,  90,  70,  90,  85,  90];
+const SERVO_DEFAULTS = [ 98, 90, 157,  90,  70,  90,  85,  90];
 const SERVO_MINS     = [ 50,  10,   0,   0,   0,  45,  0,  0];
 const SERVO_MAXS     = [150, 150, 180, 125, 180,  90, 180, 180];
 const NUM_SERVOS     = 8;
@@ -187,9 +187,13 @@ let lastServerLogLine = null;
 window.ws = null;
 
 (function autoFillWS() {
+  // control WS (:8765) อยู่ที่ rescue.py = เครื่องเดียวกับที่เสิร์ฟหน้าเว็บ
+  // → ใช้ location.hostname ได้ (localhost ตอนรันผ่าน python server)
   const host = window.location.hostname;
-  document.getElementById('wsAddr').value   = `${host}:8765`;
-  document.getElementById('piAddr').textContent = host || '192.168.1.138';
+  document.getElementById('wsAddr').value = `${host}:8765`;
+  // หมายเหตุ: #piAddr (IP ของ Pi สำหรับ map server :8766) ตั้งค่าไว้ใน index.html
+  // ห้ามเขียนทับด้วย location.hostname เพราะ Pi อยู่คนละเครื่องกับ rescue.py
+  // (ถ้าทับ จะกลายเป็น localhost → map_panel.js ต่อ map ไม่ติดตอนรันผ่าน python)
 })();
 
 function connectWS() {
@@ -590,7 +594,20 @@ function _render() {
 
   const iframe = document.querySelector('#mini-3d-wrap iframe');
   if (iframe?.contentWindow)
-    iframe.contentWindow.postMessage({ type:'state', angles:state.angles, selected:state.selected }, '*');
+    iframe.contentWindow.postMessage({
+      type:'state', angles:state.angles, selected:state.selected,
+      // ── drive state → ใช้ animate แถบตีนตะขาบใน 3D iframe ──
+      // key = คีย์คำสั่งที่กำลังส่ง (w/s/a/d/q/e/z/c) จากชุดคาร์ดินัล
+      // lr/rr = RPM ฟีดแบ็ก (ถ้า Pi ส่งกลับมา) — ถ้าเป็น 0 iframe จะ fallback ใช้ key
+      drive: {
+        moving:  !state.locked && state.active_keys.size > 0,
+        key:     currentMoveKey,
+        lr:      state.lr,
+        rr:      state.rr,
+        maxRPM:  state.rpm_spd,
+        locked:  state.locked,
+      },
+    }, '*');
 }
 
 

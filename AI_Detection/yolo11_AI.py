@@ -35,7 +35,7 @@ def allow_iframe(response):
 #   Pi (listen): libcamera-vid -t 0 --inline --width 1280 --height 720 --framerate 30 \
 #                  --codec h264 --libav-format mpegts -o "tcp://0.0.0.0:8888?listen=1"
 #   เครื่องนี้ connect เข้าเป็น client ที่ IP:port ของ Pi
-CAM_URL = "tcp://192.168.1.111:8888"
+CAM_URL = "tcp://192.168.1.67:8888"
 
 VIEW_WIDTH = 640
 VIEW_HEIGHT = 480
@@ -70,7 +70,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_FILE = os.path.join(BASE_DIR, "qr_log.csv")
 
 # ===== AI config =====
-AI_MODEL_PATH = os.path.join(BASE_DIR, "yolo11s.pt")
+AI_MODEL_PATH = os.path.join(BASE_DIR, "best.pt")
 AI_CONF   = 0.35
 AI_IOU    = 0.45
 AI_IMGSZ  = 640

@@ -81,7 +81,7 @@
             <div id="pingDisplay" class="good">PING: --</div>
             <div class="header-spacer"></div>
             <div style="font-size:11px;color:var(--text-dim);font-family:var(--head);">
-                PI: <span style="color:var(--accent)" id="piAddr">192.168.1.138</span>
+                PI: <span style="color:var(--accent)" id="piAddr">192.168.1.67</span>
             </div>
             <div style="font-size:11px;color:var(--text-dim);font-family:var(--head);display:flex;align-items:center;gap:4px;">
                 QR: <input id="flaskAddr" value="127.0.0.1:5000" style="width:110px;font-size:10px;" title="Flask QR Server IP:Port" />
@@ -404,9 +404,10 @@
             <div id="mini-lidar-wrap" style="height:180px;">
                 <div id="mini-lidar-label">&#128225; LIDAR MAP
                     <span id="lidarStatus" class="lidar-stale">NO DATA</span>
+                    <button id="lidar-save-btn" class="lidar-btn" onclick="saveMap()" title="บันทึกแผนที่ฝั่ง Pi (ROS map_saver → .pgm/.yaml)">&#128190; SAVE</button>
+                    <button id="lidar-reset-btn" class="lidar-btn" onclick="resetMap()" title="เริ่ม SLAM สร้างแผนที่ใหม่">&#8635; RESET</button>
                 </div>
-                <canvas id="lidarCanvas"></canvas>
-                <div id="lidar-range-tag">— m</div>
+                <iframe id="lidarFrame" src="lidar_example.html?embed" title="LIDAR / SLAM"></iframe>
             </div>
         </div>
 
@@ -620,7 +621,7 @@
                 <div class="sub-title">GRIPPER</div>
                 <div class="motor-controls">
                     <div class="btn" onclick="gripOpen()">🔓 OPEN<span class="key-badge">,</span></div>
-                    <div class="btn" onclick="gripClose()">🔒 CLOSE<span class="key-badge">.</div></span></div>
+                    <div class="btn" onclick="gripClose()">🔒 CLOSE<span class="key-badge">.</span></div>
                 </div>
                 <div class="divider"></div>
                 <div class="sub-title">LASER</div>
@@ -697,7 +698,45 @@
     </div><!-- #ui-root -->
 
     <script src="script_index.js"></script>
-    <script src="map_panel.js"></script>
+    <script>
+    // ── LIDAR iframe bridge (lidar_example.html ↔ rosbridge บน Pi :9090) ──
+    (function () {
+      const frame = document.getElementById('lidarFrame');
+      const statusEl = document.getElementById('lidarStatus');
+      function piHost() {
+        const pi = document.getElementById('piAddr');
+        return ((pi && pi.textContent.trim()) || '192.168.1.67').split(':')[0];
+      }
+      // ส่ง rosbridge address (IP จาก #piAddr + :9090) ให้ iframe ต่อ
+      function pushWs() {
+        frame && frame.contentWindow.postMessage(
+          { type: 'setWs', addr: piHost() + ':9090', connect: true }, '*');
+      }
+      frame && frame.addEventListener('load', () => setTimeout(pushWs, 300));
+      // รับสถานะ lidar จาก iframe → อัปเดตป้าย LIVE/NO DATA
+      window.addEventListener('message', (e) => {
+        const d = e.data; if (!d || typeof d !== 'object') return;
+        if (d.type === 'lidarStatus' && statusEl) {
+          statusEl.textContent = d.receiving ? 'LIVE' : 'NO DATA';
+          statusEl.className = d.receiving ? 'lidar-live' : 'lidar-stale';
+        } else if (d.type === 'slamResult') {
+          addLog(`SLAM ${d.cmd}: ${d.success ? 'OK' : 'FAIL'} ${d.message || ''}`,
+                 d.success ? 'ok' : 'err', 'detect');
+        }
+      });
+      // ปุ่ม SAVE → /slam/save_map (ROS map_saver มาตรฐาน), RESET → stop→start SLAM
+      window.saveMap = function () {
+        frame && frame.contentWindow.postMessage({ type: 'mapSave' }, '*');
+        addLog('Map save requested (ROS)', 'warn', 'detect');
+      };
+      window.resetMap = function () {
+        if (!frame) return;
+        frame.contentWindow.postMessage({ type: 'slamStop' }, '*');
+        setTimeout(() => frame.contentWindow.postMessage({ type: 'slamStart' }, '*'), 600);
+        addLog('SLAM restart (reset map)', 'warn', 'detect');
+      };
+    })();
+    </script>
 </body>
 
 </html>

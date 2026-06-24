@@ -43,10 +43,13 @@
 #include <FlexCAN_T4.h>
 #include <ArduinoJson.h>
 #include <PWMServo.h>   // flipper servos (bundled with Teensyduino)
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>   // IMU BNO055 (I2C: SDA=18, SCL=19)
 
 // ============================================================================
 // FLIPPER SERVOS (front + rear only — arm servos NOT attached in this build)
-// ============================================================================
+// ============================================================================ 
 
 // ===== SERVOS 8 ตัว: [0]J1 [1]J2 [2]J3 [3]J4 [4]J5 [5]Gripper [6]Flip-F [7]Flip-R =====
 const uint8_t NUM_SERVOS = 8;
@@ -89,7 +92,7 @@ const float T_MAX  =  20.0f;   // N*m
 
 // Velocity-mode tuning: Kp = 0 สำหรับ velocity control ล้วน, Kd = damping
 const float DRIVE_KP = 0.0f;
-const float DRIVE_KD = 1.0f;   // <-- tune ตามโหลด/มอเตอร์
+const float DRIVE_KD = 2.0f;   // <-- tune ตามโหลด/มอเตอร์
 const float DRIVE_TORQUE_FF = 0.0f;
 const float DRIVE_POSITION_DUMMY = 0.0f; // ไม่ใช้ใน velocity mode, ส่ง 0
 
@@ -112,6 +115,19 @@ const uint8_t CAN_CMD_EXIT_MOTOR_MODE[8]  = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
 const uint8_t CAN_CMD_ZERO_POSITION[8]    = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFE};
 
 bool motorModeActive = false;
+
+// ============================================================================
+// IMU (BNO055) — I2C: SDA=18, SCL=19 บน Teensy 4.0
+// ============================================================================
+// คงฟอร์แมตเดิมของ imu.ino ไว้ทุกอย่าง:
+//   - คำสั่ง "cal" -> โหมดแสดงค่า calibration (พิมพ์ "CAL,...")
+//   - คำสั่ง "run" -> โหมดส่งค่าให้ Python (พิมพ์ "IMU,yaw,pitch,roll,sys,gyro,accel,mag")
+// IMU เป็น optional: ถ้า boot แล้วไม่เจอ จะ "ข้าม" ไม่ block เพื่อให้มอเตอร์ยังทำงานได้
+Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x29);
+bool imuReady = false;
+bool imuCalMode = false;
+uint32_t lastImuMs = 0;
+const uint32_t IMU_PERIOD_MS = 50;   // 20 Hz, แทน delay(50) เดิม
 
 // ============================================================================
 // SERIAL COMMAND BUFFER
@@ -392,6 +408,56 @@ void handlePostureCommand(const String &line){
   else Serial.println("LOG: unknown posture");
 }
 // ============================================================================
+// IMU (BNO055) READ + OUTPUT  (คงฟอร์แมตเดิมของ imu.ino)
+// ============================================================================
+
+void readAndSendImu() {
+  if (!imuReady) return;
+
+  imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
+  imu::Vector<3> acc   = bno.getVector(Adafruit_BNO055::VECTOR_ACCELEROMETER);
+
+  float yaw_raw   = euler.x();
+  float pitch_raw = euler.y();
+  float roll_raw  = euler.z();
+
+  uint8_t sys, gyro, accel, mag;
+  bno.getCalibration(&sys, &gyro, &accel, &mag);
+
+  if (imuCalMode) {
+    Serial.print("CAL,SYS=");
+    Serial.print(sys);
+    Serial.print(",G=");
+    Serial.print(gyro);
+    Serial.print(",A=");
+    Serial.print(accel);
+    Serial.print(",M=");
+    Serial.print(mag);
+    Serial.print(",AX=");
+    Serial.print(acc.x(), 2);
+    Serial.print(",AY=");
+    Serial.print(acc.y(), 2);
+    Serial.print(",AZ=");
+    Serial.println(acc.z(), 2);
+  } else {
+    Serial.print("IMU,");
+    Serial.print(yaw_raw, 2);
+    Serial.print(",");
+    Serial.print(pitch_raw, 2);
+    Serial.print(",");
+    Serial.print(roll_raw, 2);
+    Serial.print(",");
+    Serial.print(sys);
+    Serial.print(",");
+    Serial.print(gyro);
+    Serial.print(",");
+    Serial.print(accel);
+    Serial.print(",");
+    Serial.println(mag);
+  }
+}
+
+// ============================================================================
 // TOP-LEVEL LINE DISPATCH
 // ============================================================================
 
@@ -406,7 +472,11 @@ void processLine(String line) {
 
   if (line.startsWith("SERVO")) {   handleServoCommand(line);   return; }
   if (line.startsWith("POSTURE")) { handlePostureCommand(line); return; }
-  // คำสั่งอื่น (POSTURE/GRIP/LASER/LEDS) ยังไม่มีในบิลด์นี้ -> ข้ามเงียบ
+
+  // คำสั่ง IMU (เหมือน imu.ino เดิม)
+  if (line == "cal") { imuCalMode = true;  Serial.println("INFO,MODE_CAL"); return; }
+  if (line == "run") { imuCalMode = false; Serial.println("INFO,MODE_RUN"); return; }
+  // คำสั่งอื่น (GRIP/LASER/LEDS) ยังไม่มีในบิลด์นี้ -> ข้ามเงียบ
 }
 
 // อ่าน serial แบบ non-blocking, สะสมจนเจอ '\n' แล้วค่อย dispatch
@@ -514,6 +584,22 @@ void setup() {
   lastDriveCommandMs = millis();
   lastCanSendMs = millis();
   lastFeedbackMs = millis();
+  lastImuMs = millis();
+
+  // IMU BNO055 (I2C SDA=18 / SCL=19) — optional, ไม่ block boot ถ้าไม่เจอ
+  Wire.begin();
+  Wire.setClock(100000);
+  Serial.println("INFO,START_BNO055");
+  if (bno.begin()) {
+    delay(1000);
+    bno.setExtCrystalUse(true);
+    delay(100);
+    imuReady = true;
+    Serial.println("INFO,BNO055_READY");
+  } else {
+    imuReady = false;
+    Serial.println("ERROR,BNO055_NOT_FOUND");  // มอเตอร์ยังทำงานต่อได้
+  }
 
   // Flipper servos: attach + ไปท่า home (กลางๆ) ทันทีตอน boot
   for (int i = 0; i < NUM_SERVOS; i++){
@@ -524,7 +610,7 @@ void setup() {
 
   // หมายเหตุ: ยังไม่ enter motor mode ตอน boot โดยตั้งใจ
   // มอเตอร์จะ "ปลุก" ก็ต่อเมื่อได้รับคำสั่ง drive/motor/motor_sync ครั้งแรก (ปลอดภัยกว่า)
-  Serial.println("LOG: Teensy MOTOR + FLIPPER firmware started");
+  Serial.println("LOG: Teensy MOTOR + FLIPPER + IMU firmware started");
 }
 
 void loop() {
@@ -550,5 +636,11 @@ void loop() {
   if (millis() - lastFeedbackMs >= FEEDBACK_PERIOD_MS) {
     lastFeedbackMs = millis();
     sendMotorFeedback();
+  }
+
+  // 6) อ่าน + ส่งค่า IMU เป็นรอบๆ (non-blocking แทน delay(50) เดิม)
+  if (millis() - lastImuMs >= IMU_PERIOD_MS) {
+    lastImuMs = millis();
+    readAndSendImu();
   }
 }

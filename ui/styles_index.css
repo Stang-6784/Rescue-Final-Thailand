@@ -223,6 +223,18 @@
     #mini-3d-wrap iframe { width: 100%; height: 100%; border: none; display: block; }
     #mini-3d-label { position: absolute; top: 5px; left: 7px; z-index: 5; font-family: var(--head); font-size: 7px; font-weight: 700; letter-spacing: 2px; color: var(--text-dim); background: rgba(4,6,8,0.85); padding: 2px 7px; border-radius: 20px; border: 1px solid var(--border); pointer-events: none; }
 
+    /* ══ LIDAR MAP ══ */
+    #mini-lidar-wrap { flex-shrink: 0; height: 180px; position: relative; border-top: 1px solid var(--border); overflow: hidden; background: #04060a; }
+    #lidarFrame { width: 100%; height: 100%; border: none; display: block; background: #04060a; }
+    #mini-lidar-label { position: absolute; top: 5px; left: 7px; z-index: 5; display: flex; align-items: center; gap: 6px; font-family: var(--head); font-size: 7px; font-weight: 700; letter-spacing: 2px; color: var(--text-dim); background: rgba(4,6,8,0.85); padding: 2px 7px; border-radius: 20px; border: 1px solid var(--border); pointer-events: none; }
+    #lidarStatus { font-family: var(--head); font-size: 7px; font-weight: 700; letter-spacing: 1px; padding: 1px 6px; border-radius: 20px; border: 1px solid var(--border2); }
+    #lidarStatus.lidar-live  { color: var(--ok); border-color: var(--ok); box-shadow: var(--ok-glow); }
+    #lidarStatus.lidar-stale { color: var(--text-dim); border-color: var(--border2); }
+    #lidar-range-tag { position: absolute; bottom: 5px; right: 7px; z-index: 5; font-family: var(--mono); font-size: 9px; color: var(--accent); background: rgba(4,6,8,0.85); padding: 1px 6px; border-radius: 20px; border: 1px solid var(--border); pointer-events: none; }
+    #mini-lidar-label .lidar-btn { font-family: var(--head); font-size: 7px; font-weight: 700; letter-spacing: 1px; padding: 1px 6px; border-radius: 20px; border: 1px solid var(--border2); color: var(--text-dim); background: var(--bg2); cursor: pointer; pointer-events: auto; transition: all 0.15s; }
+    #mini-lidar-label #lidar-csv-btn:hover   { border-color: var(--accent); color: var(--accent); }
+    #mini-lidar-label #lidar-reset-btn:hover { border-color: var(--warn); color: var(--warn); }
+
     #centre { display: flex; flex-direction: column; overflow: hidden; position: relative; }
     #dual-cam { display: grid; grid-template-columns: 1fr 1px 1fr; flex: 1; overflow: hidden; min-height: 0; max-height: calc(100% - 110px); }
     #cam-divider { background: var(--border); }
