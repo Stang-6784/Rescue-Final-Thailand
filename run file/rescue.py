@@ -45,9 +45,9 @@ NUM_SERVOS = 8
 SERVO_NAMES = [
     "Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper","Flip-F","Flip-R"
 ]
-SERVO_DEFAULTS = [98, 90, 157, 90, 70, 90, 85, 90]
-SERVO_MINS     = [50,  10,   0,  0,  0, 45, 0, 0]
-SERVO_MAXS     = [150, 150, 157, 125, 180, 90, 180, 180]
+SERVO_DEFAULTS = [98, 150, 157,  100, 95, 70,  85,  90]
+SERVO_MINS     = [50,  10,   0,  0,  40, 45, 0, 0]
+SERVO_MAXS     = [150, 170, 157, 180, 170, 90, 180, 180]
 
 GRIP_OPEN  = 70
 GRIP_CLOSE = 10
@@ -56,7 +56,7 @@ GRIP_MID   = (GRIP_OPEN + GRIP_CLOSE) // 2
 HOME_Y, HOME_Z, HOME_P = 30.0, 18.0, 30.0
 
 POSTURE_ANGLES = {
-    "home":   [98, 90, 157,  90, 90, 70,  90,  90],
+    "home":   [98, 150, 157,  100, 95, 70,  85,  90],
     "guard":  [50, 130,  0,  90, 90, 70,  45, 150],
     "giraff": [50, 130,  0,  90, 90, 70,  57,  80],
     "stair":  [50,130, 90, 110, 90, 70, 160, 45],
@@ -415,17 +415,11 @@ class RobotController:
     def _servo_cmd(self, idx, angle):
         safe = _sv_clamp(idx, angle)
         self.angles[idx] = safe
+        # Gripper (idx 5) เป็น PWMServo ปรับองศาได้จริงบน Teensy (ช่วง 45–90°)
+        # ส่ง servo_set ตรงๆ เหมือน joint อื่น เพื่อให้สั่งองศาได้อิสระ
         if idx == 5:
-            if safe >= GRIP_MID:
-                _send_pi({"type":"motor_reverse"})
-                self.angles[5] = GRIP_OPEN
-                self.motor_state = "reverse"
-            else:
-                _send_pi({"type":"motor_grip"})
-                self.angles[5] = GRIP_CLOSE
-                self.motor_state = "grip"
-        else:
-            _send_pi({"type":"servo_set","index":idx,"angle":safe})
+            self.motor_state = "reverse" if safe >= GRIP_MID else "grip"
+        _send_pi({"type":"servo_set","index":idx,"angle":safe})
 
     # ── Posture ──────────────────────────────────────────────
     def _send_posture(self, name):
@@ -435,10 +429,14 @@ class RobotController:
             self._log("Posture → horizontal")
             return
         if name == 'home':
-            _send_pi({"type":"posture","name":"home"})
-            self.angles = list(POSTURE_ANGLES['home'])
+            # Python เป็นเจ้าของค่าองศา → ส่ง servo_set รายตัวให้ Teensy
+            # (Teensy แค่รับค่ามาเขียนลง servo ไม่ต้องเก็บค่า home เอง)
+            angles = POSTURE_ANGLES['home']
+            self.angles = list(angles)
             self.motor_state = "stop"
-            self._log("Posture → home")
+            self._log(f"Posture → home: {angles}")
+            for idx, angle in enumerate(angles):
+                _send_pi({"type":"servo_set","index":idx,"angle":_sv_clamp(idx, angle)})
             return
         # ── F7 QR SCAN — ส่ง GOTO ตรงๆ เหมือน F2 ──
         if name == 'custom_2':
@@ -568,24 +566,20 @@ class RobotController:
         elif t == "set_step":
             self.servo_step = int(msg.get("step",1))
 
-        # ── Gripper ───────────────────────────────────────────
+        # ── Gripper (PWMServo ปรับองศาได้ — สั่ง servo_set ตรงๆ) ──
         elif t == "motor_grip":
-            self.motor_state = "grip"
-            self.angles[5]   = GRIP_CLOSE
-            _send_pi({"type":"motor_grip"})
-            self._log("Gripper → CLOSE")
+            self._servo_cmd(5, GRIP_CLOSE)
+            self._log(f"Gripper → CLOSE ({self.angles[5]}°)")
 
         elif t == "motor_reverse":
-            self.motor_state = "reverse"
-            self.angles[5]   = GRIP_OPEN
-            _send_pi({"type":"motor_reverse"})
-            self._log("Gripper → OPEN")
+            self._servo_cmd(5, GRIP_OPEN)
+            self._log(f"Gripper → OPEN ({self.angles[5]}°)")
 
         elif t == "motor_stop":
+            # ค้างองศาปัจจุบันไว้ (servo ไม่มี free-spin)
+            self._servo_cmd(5, self.angles[5])
             self.motor_state = "stop"
-            self.angles[5]   = GRIP_OPEN
-            _send_pi({"type":"motor_stop"})
-            self._log("Gripper → STOP")
+            self._log(f"Gripper → HOLD ({self.angles[5]}°)")
 
         # ── Posture ───────────────────────────────────────────
         elif t == "posture":

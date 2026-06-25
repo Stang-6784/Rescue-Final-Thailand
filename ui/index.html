@@ -407,7 +407,7 @@
                     <button id="lidar-save-btn" class="lidar-btn" onclick="saveMap()" title="บันทึกแผนที่ฝั่ง Pi (ROS map_saver → .pgm/.yaml)">&#128190; SAVE</button>
                     <button id="lidar-reset-btn" class="lidar-btn" onclick="resetMap()" title="เริ่ม SLAM สร้างแผนที่ใหม่">&#8635; RESET</button>
                 </div>
-                <iframe id="lidarFrame" src="lidar_example.html?embed" title="LIDAR / SLAM"></iframe>
+                <iframe id="lidarFrame" src="lidar.html" title="LIDAR / SLAM"></iframe>
             </div>
         </div>
 
@@ -532,6 +532,7 @@
                     <div style="display:flex;gap:4px;margin-left:auto;">
                         <button class="log-toggle-btn" id="btnMoveLogInline" onclick="toggleMoveLog()"><span class="ltb-dot"></span>MOVE</button>
                         <button class="log-toggle-btn" id="btnDetectLogInline" onclick="toggleDetectLog()"><span class="ltb-dot"></span>DETECT</button>
+                        <button class="log-toggle-btn" id="btnImuLogInline" onclick="toggleImuLog()"><span class="ltb-dot"></span>IMU</button>
                         <button class="log-toggle-btn" onclick="clearSysLog()">✕ CLEAR</button>
                     </div>
                 </div>
@@ -671,6 +672,16 @@
             <button class="log-panel-clear" onclick="clearDetectLog()">CLEAR</button>
         </div>
         <div class="log-panel-body" id="detect-log-body"></div>
+    </div>
+
+    <!-- IMU LOG PANEL -->
+    <div id="log-panel-imu" class="log-panel">
+        <div class="log-panel-header">
+            <span class="log-panel-title">⟳ IMU LOG</span>
+            <span class="log-panel-count" id="imu-log-count">0</span>
+            <button class="log-panel-clear" onclick="clearImuLog()">CLEAR</button>
+        </div>
+        <div class="log-panel-body" id="imu-log-body"></div>
     </div>
 
     <!-- FULLSCREEN OVERLAY -->

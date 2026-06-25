@@ -502,10 +502,13 @@
     .log-panel.open { transform: translateY(0); opacity: 1; pointer-events: all; }
     #log-panel-move   { left: 5px; }
     #log-panel-detect { right: 5px; }
+    #log-panel-imu    { left: 50%; transform: translateX(-50%) translateY(20px); }
+    #log-panel-imu.open { transform: translateX(-50%) translateY(0); }
     .log-panel-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface2); border-bottom: 1px solid var(--border2); border-radius: var(--radius2) var(--radius2) 0 0; flex-shrink: 0; }
     .log-panel-title { font-family: var(--head); font-size: 9px; font-weight: 700; letter-spacing: 2px; flex: 1; }
     #log-panel-move   .log-panel-title { color: var(--accent); }
     #log-panel-detect .log-panel-title { color: var(--ok); }
+    #log-panel-imu    .log-panel-title { color: var(--amber); }
     .log-panel-count { font-family: var(--head); font-size: 8px; font-weight: 700; letter-spacing: 1px; padding: 2px 7px; border-radius: 20px; border: 1px solid var(--border2); color: var(--text-dim); background: var(--bg2); }
     .log-panel-clear { font-family: var(--head); font-size: 8px; font-weight: 700; letter-spacing: 1px; padding: 2px 8px; border-radius: 20px; border: 1px solid var(--border2); color: var(--text-dim); background: none; cursor: pointer; }
     .log-panel-clear:hover { border-color: var(--danger); color: var(--danger); }
@@ -526,6 +529,8 @@
     .log-toggle-btn.active-move   .ltb-dot { background: var(--accent); box-shadow: var(--glow); }
     .log-toggle-btn.active-detect { border-color: var(--ok); color: var(--ok); background: #051a10; }
     .log-toggle-btn.active-detect .ltb-dot { background: var(--ok); box-shadow: var(--ok-glow); }
+    .log-toggle-btn.active-imu    { border-color: var(--amber); color: var(--amber); background: #1a1000; }
+    .log-toggle-btn.active-imu    .ltb-dot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
 
     /* ══ QR PANEL ══ */
     #qr-panel { position: absolute; inset: 0; z-index: 20; background: var(--bg2); display: none; flex-direction: column; }

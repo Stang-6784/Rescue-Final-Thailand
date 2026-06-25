@@ -3,9 +3,9 @@
 // ═══════════════════════════════════════
 const SERVO_NAMES    = ["Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper","Flip-F","Flip-R"];
 const SERVO_KEYS_MAP = ['y','u','i','o','h','j','k','l'];
-const SERVO_DEFAULTS = [ 98, 90, 157,  90,  70,  90,  85,  90];
+const SERVO_DEFAULTS = [98, 150, 157,  100, 95, 70,  85,  90];
 const SERVO_MINS     = [ 50,  10,   0,   0,   0,  45,  0,  0];
-const SERVO_MAXS     = [150, 150, 180, 125, 180,  90, 180, 180];
+const SERVO_MAXS     = [150, 150, 180, 180, 180,  90, 180, 180];
 const NUM_SERVOS     = 8;
 
 let MOVE_KEYS = new Set(['w','a','s','d','q','e','z','c']);
@@ -310,8 +310,10 @@ const LOG_MAX = 120;
 let sysLogEntries  = [];
 let moveLogEntries = [];
 let detLogEntries  = [];
+let imuLogEntries  = [];
 let moveLogOpen    = false;
 let detectLogOpen  = false;
+let imuLogOpen     = false;
 
 function _ts() { return new Date().toLocaleTimeString('en-GB',{hour12:false}); }
 
@@ -354,15 +356,20 @@ function addLog(msg, cls = 'ok', cat = 'sys') {
     sysLogEntries.push({ msg, cls });
     if (sysLogEntries.length > 50) sysLogEntries.shift();
     _refreshLogBox();
+  } else if (cat === 'imu') {
+    imuLogEntries.push(entry);
+    if (imuLogEntries.length > LOG_MAX) imuLogEntries.shift();
+    _renderLogPanel('imu', imuLogEntries);
   }
 }
 
 function addMoveLog(msg, cls = 'ok')   { addLog(msg, cls, 'move'); }
 function addDetectLog(msg, cls = 'ok') { addLog(msg, cls, 'detect'); }
+function addImuLog(msg, cls = 'ok')    { addLog(msg, cls, 'imu'); }
 
 function _renderLogPanel(type, entries) {
-  const bodyId  = type === 'move' ? 'move-log-body'  : 'detect-log-body';
-  const countId = type === 'move' ? 'move-log-count' : 'detect-log-count';
+  const bodyId  = `${type}-log-body`;
+  const countId = `${type}-log-count`;
   const body    = document.getElementById(bodyId);
   const countEl = document.getElementById(countId);
   if (!body) return;
@@ -392,8 +399,16 @@ function toggleDetectLog() {
   if (detectLogOpen) _renderLogPanel('detect', detLogEntries);
 }
 
+function toggleImuLog() {
+  imuLogOpen = !imuLogOpen;
+  document.getElementById('log-panel-imu').classList.toggle('open', imuLogOpen);
+  ['btnImuLog','btnImuLogInline'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('active-imu', imuLogOpen); });
+  if (imuLogOpen) _renderLogPanel('imu', imuLogEntries);
+}
+
 function clearMoveLog()   { moveLogEntries = []; _renderLogPanel('move',   moveLogEntries); }
 function clearDetectLog() { detLogEntries  = []; _renderLogPanel('detect', detLogEntries);  }
+function clearImuLog()    { imuLogEntries  = []; _renderLogPanel('imu',    imuLogEntries);  }
 
 
 // ═══════════════════════════════════════
@@ -1755,6 +1770,22 @@ function fitUIRoot() { /* responsive ผ่าน CSS แล้ว — ไม่
 // ═══════════════════════════════════════
 const imuState = { roll: 0, pitch: 0, yaw: 0, live: false };
 let _imuStaleTimer = null;
+// throttle IMU → log: log อย่างน้อยทุก 1s หรือเมื่อค่าเปลี่ยน > 2° (กันสแปม 20Hz)
+let _imuLogLast = { t: 0, roll: null, pitch: null, yaw: null };
+const _IMU_LOG_MS = 1000, _IMU_LOG_DEG = 2;
+
+function _logIMU() {
+  const now = Date.now();
+  const r = imuState.roll, p = imuState.pitch, y = imuState.yaw;
+  const moved = _imuLogLast.roll === null
+    || Math.abs(r - _imuLogLast.roll)  >= _IMU_LOG_DEG
+    || Math.abs(p - _imuLogLast.pitch) >= _IMU_LOG_DEG
+    || Math.abs(y - _imuLogLast.yaw)   >= _IMU_LOG_DEG;
+  if (now - _imuLogLast.t < _IMU_LOG_MS && !moved) return;
+  _imuLogLast = { t: now, roll: r, pitch: p, yaw: y };
+  const f = v => (v >= 0 ? '+' : '') + v.toFixed(1);
+  addImuLog(`R ${f(r)}°  P ${f(p)}°  Y ${f(y)}°`, 'ok');
+}
 
 function updateIMU(msg) {
   if (typeof msg.roll  === 'number') imuState.roll  = msg.roll;
@@ -1780,6 +1811,7 @@ function updateIMU(msg) {
   }, 1500);
 
   drawIMUAH();
+  _logIMU();
 }
 
 function drawIMUAH() {

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LIDAR / SLAM</title>
+<!-- ============================================================================
+  lidar_example.html  —  แผง LIDAR MAP (ฝังเป็น iframe ใน index.html)
+
+  ต่อ rosbridge บน Pi (ws://<PI_IP>:9090) ตรงๆ ด้วย WebSocket (rosbridge v2
+  protocol เป็น JSON ล้วน) — ไม่พึ่ง roslib.js / CDN ใดๆ เพื่อให้ใช้ได้แม้
+  หุ่นอยู่บนเครือข่ายที่ไม่มีอินเทอร์เน็ต
+
+  สัญญา (postMessage) กับ index.html — ดู index.html บรรทัด ~700-738:
+    parent → iframe:
+      {type:'setWs', addr:'<ip>:9090', connect:true}   ← ตอน iframe โหลดเสร็จ
+      {type:'mapSave'}                                  ← ปุ่ม SAVE
+      {type:'slamStop'} / {type:'slamStart'}            ← ปุ่ม RESET
+    iframe → parent:
+      {type:'lidarStatus', receiving:bool}             ← อัปเดตป้าย LIVE/NO DATA
+      {type:'slamResult', cmd, success, message}       ← ผลปุ่ม SAVE/RESET
+
+  ทำงาน: subscribe /scan (LaserScan) + /map (OccupancyGrid) ผ่าน rosbridge
+  - มี /map → วาดแผนที่ SLAM เต็มจอ + มินิ scan มุมขวาล่าง
+  - ยังไม่มี /map → วาด /scan แบบเรดาร์เต็มจอ (ใช้ดูว่า LIDAR ยังมีชีวิต)
+============================================================================ -->
+<style>
+  :root {
+    --bg: #04060a; --grid: #0e1626; --map-unknown: #262c38;
+    --map-free: #101828; --accent: #00d4ff; --text-dim: #3d5570; --text: #b8cce0;
+  }
+  html, body { margin: 0; height: 100%; width: 100%; background: var(--bg);
+    overflow: hidden; font-family: 'Consolas', monospace; color: var(--text); }
+  #wrap { position: relative; height: 100%; width: 100%; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas.panning { cursor: grabbing; }
+  #hud { position: absolute; left: 6px; top: 5px; font-size: 9px; letter-spacing: 1px;
+    color: var(--text-dim); pointer-events: none; text-shadow: 0 0 4px #000; }
+  #hud b { color: var(--accent); }
+  #waiting { position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; font-size: 11px; color: var(--text-dim);
+    text-align: center; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="cv"></canvas>
+  <div id="hud"></div>
+  <div id="waiting">รอเชื่อมต่อ rosbridge…</div>
+</div>
+
+<script>
+"use strict";
+// ── ปรับชื่อ topic / service ให้ตรงกับฝั่ง Pi ได้ที่นี่ ──────────────────────
+const CONFIG = {
+  scanTopic:  '/scan',          scanType: 'sensor_msgs/LaserScan',
+  mapTopic:   '/map',           mapType:  'nav_msgs/OccupancyGrid',
+  scanThrottleMs: 100,          // จำกัดอัตรา /scan กันท่วม
+  // บริการ SLAM — ปุ่ม SAVE/RESET จะเรียกตามนี้ (best-effort; แก้ชื่อตามสแต็กจริง)
+  saveService:  '/slam_toolbox/save_map', saveType: 'slam_toolbox/srv/SaveMap',
+  startService: '/slam/start',            startType: 'std_srvs/srv/Empty',
+  stopService:  '/slam/stop',             stopType:  'std_srvs/srv/Empty',
+  staleMs: 3000,                // ไม่มีข้อมูลใหม่เกินช่วงนี้ = NO DATA
+};
+
+// ── สถานะ ──────────────────────────────────────────────────────────────────
+const cv  = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const hud = document.getElementById('hud');
+const waitEl = document.getElementById('waiting');
+
+let ws = null, wsAddr = null, retryT = null;
+let lastScan = null, lastMap = null;
+let receiving = false, staleT = null;
+const pendingSrv = new Map();   // id → {cmd, resolve}
+
+// view transform: ครอบการวาดทั้งหมด — screen = pan + zoom * (พิกัด fit เดิม)
+let view = { zoom: 1, panX: 0, panY: 0 };
+function resetView() { view.zoom = 1; view.panX = 0; view.panY = 0; }
+
+// ── postMessage → parent (index.html) ───────────────────────────────────────
+function toParent(obj) { try { parent.postMessage(obj, '*'); } catch (e) {} }
+function setReceiving(on) {
+  if (on !== receiving) { receiving = on; toParent({ type: 'lidarStatus', receiving: on }); }
+  if (on) {
+    waitEl.style.display = 'none';
+    clearTimeout(staleT);
+    staleT = setTimeout(() => setReceiving(false), CONFIG.staleMs);
+  }
+}
+
+// ── rosbridge WebSocket client (protocol v2, JSON ล้วน) ─────────────────────
+function connect(addr) {
+  if (addr) wsAddr = addr;
+  if (!wsAddr) return;
+  cleanup();
+  const url = 'ws://' + wsAddr;
+  hud.innerHTML = 'rosbridge: <b>connecting</b> ' + wsAddr;
+  try { ws = new WebSocket(url); } catch (e) { return retry(); }
+
+  ws.onopen = () => {
+    hud.innerHTML = 'rosbridge: <b>connected</b> ' + wsAddr;
+    send({ op: 'subscribe', topic: CONFIG.scanTopic, type: CONFIG.scanType,
+           throttle_rate: CONFIG.scanThrottleMs, queue_length: 1 });
+    send({ op: 'subscribe', topic: CONFIG.mapTopic, type: CONFIG.mapType,
+           queue_length: 1 });
+  };
+  ws.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.op === 'publish') {
+      if (m.topic === CONFIG.scanTopic) { lastScan = m.msg; setReceiving(true); }
+      else if (m.topic === CONFIG.mapTopic) { lastMap = m.msg; setReceiving(true); }
+    } else if (m.op === 'service_response') {
+      const p = pendingSrv.get(m.id);
+      if (p) { pendingSrv.delete(m.id);
+        toParent({ type: 'slamResult', cmd: p.cmd,
+          success: m.result !== false,
+          message: m.values && m.values.message ? m.values.message : (m.result === false ? 'service failed' : 'ok') }); }
+    }
+  };
+  ws.onclose = () => { setReceiving(false); hud.innerHTML = 'rosbridge: <b>closed</b> — retry…'; retry(); };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
+}
+function send(obj) { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); } catch (e) {} }
+function retry() { clearTimeout(retryT); retryT = setTimeout(() => connect(), 2000); }
+function cleanup() { clearTimeout(retryT); if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} ws = null; } }
+
+// ── เรียก ROS service (SAVE / RESET) ────────────────────────────────────────
+function callService(service, type, args, cmd) {
+  if (!ws || ws.readyState !== 1) {
+    return toParent({ type: 'slamResult', cmd, success: false, message: 'rosbridge ไม่ได้เชื่อมต่อ' });
+  }
+  const id = 'srv_' + cmd + '_' + Date.now();
+  pendingSrv.set(id, { cmd });
+  send({ op: 'call_service', service, type, args: args || {}, id });
+  // timeout กันค้างถ้าไม่มี response
+  setTimeout(() => { if (pendingSrv.has(id)) { pendingSrv.delete(id);
+    toParent({ type: 'slamResult', cmd, success: false, message: 'timeout (ไม่มี response)' }); } }, 8000);
+}
+
+// ── รับคำสั่งจาก parent (index.html) ────────────────────────────────────────
+window.addEventListener('message', (e) => {
+  const d = e.data; if (!d || typeof d !== 'object') return;
+  switch (d.type) {
+    case 'setWs':   if (d.addr) connect(d.addr); break;
+    case 'mapSave': callService(CONFIG.saveService, CONFIG.saveType,
+                      { name: { data: 'map' } }, 'save'); break;
+    case 'slamStop':  callService(CONFIG.stopService, CONFIG.stopType, {}, 'stop'); break;
+    case 'slamStart': callService(CONFIG.startService, CONFIG.startType, {}, 'start'); break;
+  }
+});
+
+// ── วาดภาพ ──────────────────────────────────────────────────────────────────
+const mapCanvas = document.createElement('canvas');   // offscreen map ความละเอียดจริง
+
+function drawMapTo(ctx2, m, x0, y0, dw, dh) {
+  const w = m.info.width, h = m.info.height, data = m.data;
+  if (!w || !h) return false;
+  mapCanvas.width = w; mapCanvas.height = h;
+  const octx = mapCanvas.getContext('2d');
+  const img = octx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    const src = (h - 1 - y) * w;                  // OccupancyGrid เริ่มมุมล่างซ้าย → พลิกแนวตั้ง
+    for (let x = 0; x < w; x++) {
+      const v = data[src + x], di = (y * w + x) * 4;
+      let r, g, b;
+      if (v < 0)        { r = 38; g = 44;  b = 56;  }    // unknown
+      else if (v >= 50) { r = 0;  g = 212; b = 255; }    // obstacle (accent)
+      else              { r = 16; g = 24;  b = 40;  }    // free
+      img.data[di] = r; img.data[di+1] = g; img.data[di+2] = b; img.data[di+3] = 255;
+    }
+  }
+  octx.putImageData(img, 0, 0);
+  ctx2.imageSmoothingEnabled = false;
+  ctx2.drawImage(mapCanvas, 0, 0, w, h, x0, y0, dw, dh);
+  return true;
+}
+
+function drawScanPolar(cx, cy, radius, dim) {
+  const s = lastScan; if (!s || !s.ranges || !s.ranges.length) return;
+  const rmax = s.range_max && isFinite(s.range_max) ? s.range_max : 6;
+  const scale = radius / rmax;
+  // วงรัศมีอ้างอิง
+  ctx.strokeStyle = dim ? 'rgba(0,212,255,0.18)' : 'rgba(0,212,255,0.25)';
+  ctx.lineWidth = 1;
+  for (let k = 1; k <= 3; k++) {
+    ctx.beginPath(); ctx.arc(cx, cy, radius * k / 3, 0, Math.PI * 2); ctx.stroke();
+  }
+  // จุด scan
+  ctx.fillStyle = dim ? 'rgba(0,255,136,0.7)' : '#00ff88';
+  const dot = dim ? 1 : 1.6;
+  for (let i = 0; i < s.ranges.length; i++) {
+    const r = s.ranges[i];
+    if (!isFinite(r) || r <= 0 || r > rmax) continue;
+    const a = s.angle_min + i * s.angle_increment;
+    const x = cx + r * scale * Math.cos(a);
+    const y = cy - r * scale * Math.sin(a);
+    ctx.fillRect(x - dot, y - dot, dot * 2, dot * 2);
+  }
+  // จุดศูนย์ (ตำแหน่งหุ่น/เซนเซอร์)
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(cx, cy, dim ? 1.5 : 2.5, 0, Math.PI * 2); ctx.fill();
+}
+
+function render() {
+  const W = cv.clientWidth || 240, H = cv.clientHeight || 160;
+  if (cv.width !== W) cv.width = W;
+  if (cv.height !== H) cv.height = H;
+  ctx.fillStyle = '#04060a';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.translate(view.panX, view.panY);   // เลื่อน (pan)
+  ctx.scale(view.zoom, view.zoom);        // ซูม (zoom)
+
+  if (lastMap) {
+    const w = lastMap.info.width, h = lastMap.info.height;
+    const s = Math.min(W / w, H / h);
+    const dw = w * s, dh = h * s, ox = (W - dw) / 2, oy = (H - dh) / 2;
+    drawMapTo(ctx, lastMap, ox, oy, dw, dh);
+    // มินิ scan มุมขวาล่าง
+    if (lastScan) {
+      const rad = Math.min(W, H) * 0.16;
+      drawScanPolar(W - rad - 8, H - rad - 8, rad, true);
+    }
+    const res = lastMap.info.resolution || 0;
+    hud.innerHTML = 'MAP <b>' + w + '×' + h + '</b> · ' + (w * res).toFixed(1) + '×' + (h * res).toFixed(1) + ' m';
+  } else if (lastScan) {
+    drawScanPolar(W / 2, H / 2, Math.min(W, H) / 2 - 10, false);
+    const n = lastScan.ranges ? lastScan.ranges.length : 0;
+    hud.innerHTML = 'SCAN <b>' + n + '</b> pts · ยังไม่มี /map (SLAM?)';
+  }
+
+  ctx.restore();
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+// ── zoom (scroll) + pan (ลากคลิกซ้าย) ───────────────────────────────────────
+cv.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const nz = Math.max(0.2, Math.min(20, view.zoom * k));
+  const r = nz / view.zoom;                  // ตรึงจุดใต้เคอร์เซอร์ให้อยู่กับที่
+  view.panX = e.offsetX - r * (e.offsetX - view.panX);
+  view.panY = e.offsetY - r * (e.offsetY - view.panY);
+  view.zoom = nz;
+}, { passive: false });
+
+let panning = false, lastX = 0, lastY = 0;
+cv.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;                 // เฉพาะคลิกซ้าย
+  panning = true; lastX = e.clientX; lastY = e.clientY; cv.classList.add('panning');
+});
+window.addEventListener('mousemove', (e) => {
+  if (!panning) return;
+  view.panX += e.clientX - lastX; view.panY += e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+});
+window.addEventListener('mouseup', () => { panning = false; cv.classList.remove('panning'); });
+cv.addEventListener('dblclick', () => resetView());   // ดับเบิลคลิก = รีเซ็ตมุมมอง
+
+// ถ้าเปิดไฟล์ตรงๆ (ไม่ผ่าน iframe) ลองต่อ host ปัจจุบัน:9090 ให้ทดสอบได้
+if (window.parent === window && location.hostname) {
+  connect((location.hostname || 'localhost') + ':9090');
+}
+</script>
+</body>
+</html>

@@ -58,7 +58,8 @@ const uint8_t NUM_SERVOS = 8;
 const uint8_t SERVO_PINS[NUM_SERVOS] = { 8,  9,  10,  5,  4,  3,    6,    7 };
 const int SERVO_MIN[NUM_SERVOS]  = { 50, 10,  0,  0,  0, 45, 0, 0 };
 const int SERVO_MAX[NUM_SERVOS]  = {150, 150, 180, 125, 180, 90, 180, 180 };
-const int SERVO_HOME[NUM_SERVOS] = { 98, 90, 157, 90, 90, 70, 90, 90 };  // = POSTURE home
+// ค่า home ตรงกับฝั่ง Python (rescue.py: SERVO_DEFAULTS / POSTURE_ANGLES["home"])
+const int SERVO_HOME[NUM_SERVOS] = { 98, 90, 157, 100, 95, 70, 85, 90 };  // = POSTURE home
 PWMServo servos[NUM_SERVOS];
 int servoDeg[NUM_SERVOS];
 
@@ -388,23 +389,16 @@ void handleServoCommand(const String &line){
   setServo(idx, deg);
 }
 
-
-const int POSTURE_HOME[NUM_SERVOS]   = { 98,170,157, 90, 90, 70, 90, 90 };
-const int POSTURE_GUARD[NUM_SERVOS]  = { 50,130,  0, 90, 90, 70, 45,150 };
-const int POSTURE_GIRAFF[NUM_SERVOS] = { 50,130,  0, 90, 90, 70, 57, 80 };
-const int POSTURE_STAIR[NUM_SERVOS]  = { 50,130, 90,110, 90, 70,160, 45 };
-
 void applyPosture(const int *arr){
   for (int i = 0; i < NUM_SERVOS; i++) setServo(i, arr[i]);
 }
 // "POSTURE <name>"
+// firmware เก็บไว้แค่ท่า "home" เท่านั้น (= SERVO_HOME)
+// ท่าอื่น (guard/giraff/stair/custom) ฝั่ง Python สั่งเองผ่าน servo_set/SERVO <idx> <deg>
 void handlePostureCommand(const String &line){
   int sp = line.indexOf(' ');  if (sp < 0) return;
   String name = line.substring(sp + 1); name.trim();
-  if      (name.equalsIgnoreCase("home"))   applyPosture(POSTURE_HOME);
-  else if (name.equalsIgnoreCase("guard"))  applyPosture(POSTURE_GUARD);
-  else if (name.equalsIgnoreCase("giraff")) applyPosture(POSTURE_GIRAFF);
-  else if (name.equalsIgnoreCase("stair"))  applyPosture(POSTURE_STAIR);
+  if (name.equalsIgnoreCase("home")) applyPosture(SERVO_HOME);
   else Serial.println("LOG: unknown posture");
 }
 // ============================================================================

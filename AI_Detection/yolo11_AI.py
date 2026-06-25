@@ -51,7 +51,7 @@ BLACK_IN_WHITE_S_MAX = 100
 BLACK_DOT_AREA_MIN   = 10
 BLACK_DOT_AREA_MAX   = 5000
 
-# ===== target lock config =====
+# ===== target lock config =====a
 LOCK_MAX_DIST = 35.0
 LOCK_LOST_LIMIT = 8
 CENTER_X_TOL = 160
