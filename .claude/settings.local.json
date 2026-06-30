@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "PowerShell(python -c \"import ultralytics; print\\('ultralytics', ultralytics.__version__\\)\" 2>&1)",
+      "PowerShell(python -c \"import torch; print\\('torch', torch.__version__, 'cuda', torch.cuda.is_available\\(\\)\\)\" 2>&1)",
+      "PowerShell(python -m pip install ultralytics)",
+      "PowerShell(python -c \"from ultralytics import YOLO; import torch; print\\('ultralytics ok'\\); print\\('torch', torch.__version__, '| cuda', torch.cuda.is_available\\(\\)\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(git commit -q -m 'chore: ignore large model weights \\(AI_Detection/best.pt\\) *)",
+      "Bash(git rev-list *)",
+      "Bash(git cat-file *)",
+      "Bash(sort -k2 -n)"
+    ]
+  }
+}

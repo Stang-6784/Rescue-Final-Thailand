@@ -38,40 +38,49 @@ QR_SEND_FPS = 8
 # Flask QR server (python qr_server.py รันแยก)
 FLASK_BASE = "http://127.0.0.1:5000"   # ← แก้ IP ถ้า Flask อยู่เครื่องอื่น
 
+# ── Map marking: เมื่อ scan เจอ hazmat/QR → ส่ง mark ผ่าน Pi TCP ไป ROS2 ──
+#   rescue.py → tcp_bridge (/mark/request) → map_marker_pi → /scan_marks → lidar.html
+MARK_ON_SCAN     = True   # ปิดได้ถ้าไม่อยากปักหมุดอัตโนมัติ
+AI_MARK_DEBOUNCE = 15.0   # วินาที: คลาส hazmat เดิมจะปักหมุดซ้ำได้หลังพ้นช่วงนี้ (กันสแปม)
+
 # ═══════════════════════════════════════════════════════════════
 #  Servo config
 # ═══════════════════════════════════════════════════════════════
-NUM_SERVOS = 8
+NUM_SERVOS = 9
 SERVO_NAMES = [
-    "Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper","Flip-F","Flip-R"
+    "Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper", "Gripper2", "Flip-F","Flip-R"
 ]
-SERVO_DEFAULTS = [98, 150, 157,  100, 95, 70,  85,  90]
-SERVO_MINS     = [50,  10,   0,  0,  40, 45, 0, 0]
-SERVO_MAXS     = [150, 170, 157, 180, 170, 90, 180, 180]
+SERVO_DEFAULTS = [98, 150, 150,  80,  100, 100,  0,   85,   90]
+SERVO_MINS     = [50,  10,   0,  0,  0, 0, 0, 0, 0]
+SERVO_MAXS     = [150, 170, 157, 180, 170, 180, 180, 180, 180]
 
 GRIP_OPEN  = 70
 GRIP_CLOSE = 10
 GRIP_MID   = (GRIP_OPEN + GRIP_CLOSE) // 2
 
+GRIP2_OPEN  = 180
+GRIP2_CLOSE = 0
+GRIP2_MID   = (GRIP2_OPEN + GRIP2_CLOSE) // 2
+
 HOME_Y, HOME_Z, HOME_P = 30.0, 18.0, 30.0
 
 POSTURE_ANGLES = {
-    "home":   [98, 150, 157,  100, 95, 70,  85,  90],
-    "guard":  [50, 130,  0,  90, 90, 70,  45, 150],
-    "giraff": [50, 130,  0,  90, 90, 70,  57,  80],
-    "stair":  [50,130, 90, 110, 90, 70, 160, 45],
+    "home":   [98, 150, 150,  80,  100, 100,  0,   85,   90],
+    "guard":  [98, 150, 150,  80,  100, 100,  0, 154, 154],
+    "giraff": [98, 150, 150,  80,  100, 100,  0, 27,  38],
+    "stair":  [98, 150, 138, 80,  100, 100,  0, 118, 52],
 }
 
 # Custom postures F4-F9 — กำหนดจาก Browser Settings UI
 # format: [J1, J2, J3, J4, J5, J6, Flip-F, Flip-R]
 # giraff/stair มีค่า default แต่ override ได้จาก UI
 CUSTOM_POSTURES = {
-    "giraff":   [50, 130,  0,  120, 90, 70,  57,  60],   # F4 default
-    "stair":    [50,130, 90, 120, 90, 70, 135, 105],   # F5 default
-    "custom_1": [50, 130,  0,  90, 90, 70, 140, 45],   # F6 default = ยีราฟ
-    "custom_2": [106, 103, 0, 69, 90, 70, 140, 45],   # F7 QR SCAN + Flipper down
-    "custom_3": [60, 130,  0,  90, 90, 70, 100, 100],   # F8 default = HOME
-    "custom_4": [60, 130,  0,  90, 90, 70, 126, 113],   # F9 default = HOME
+    "giraff":   [98, 150, 157,  100, 100, 70, 90,  27,  38],   # F4 default
+    "stair":    [50,130, 90, 120, 100, 70, 90, 135, 105],   # F5 default
+    "K-Rail": [98, 150, 157, 100, 100, 70, 90, 78, 154],   # F6 ด่าน K-Rails
+    "custom_2": [106, 103, 0, 69, 100, 70, 90, 140, 45],   # F7 QR SCAN + Flipper down
+    "custom_3": [60, 130,  0,  90, 100, 70, 90, 100, 100],   # F8 default = HOME
+    "custom_4": [60, 130,  0,  90, 100, 70, 90, 126, 113],   # F9 default = HOME
 }
 
 MOVE_KEYS = {'w','a','s','d','q','e','z','c'}
@@ -217,6 +226,7 @@ class QRWorker:
     def _run(self):
         self._log(f"[QRWorker] polling {FLASK_BASE}/status")
         last_qr = ""
+        ai_marked = {}   # class name -> last mark time (debounce hazmat)
         while not self._stop_evt.is_set():
             try:
                 with urllib.request.urlopen(
@@ -237,6 +247,19 @@ class QRWorker:
                         "all_qr": all_qr,
                     })
                     self._log(f"[QR] {qr_text}")
+                    # ปักหมุด QR ลงแผนที่ (ผ่าน Pi → ROS2)
+                    if MARK_ON_SCAN and qr_text:
+                        _send_pi({"type": "mark", "kind": "qr", "text": qr_text})
+                        self._log(f"[MARK] QR → map: {qr_text}")
+
+                # ปักหมุด hazmat ที่ AI เจอ (debounce ต่อคลาส กันสแปม)
+                if MARK_ON_SCAN:
+                    now = time.time()
+                    for cls in data.get("ai_classes", []):
+                        if now - ai_marked.get(cls, 0.0) >= AI_MARK_DEBOUNCE:
+                            ai_marked[cls] = now
+                            _send_pi({"type": "mark", "kind": "ai", "text": cls})
+                            self._log(f"[MARK] hazmat → map: {cls}")
 
             except Exception:
                 # Flask ยังไม่รัน หรือ network error → รอต่อ
@@ -566,20 +589,22 @@ class RobotController:
         elif t == "set_step":
             self.servo_step = int(msg.get("step",1))
 
-        # ── Gripper (PWMServo ปรับองศาได้ — สั่ง servo_set ตรงๆ) ──
+        # ── Gripper (PWMServo ปรับองศาได้ — สั่ง servo_set ตรงๆ, คุม Gripper#1+#2 พร้อมกัน) ──
         elif t == "motor_grip":
             self._servo_cmd(5, GRIP_CLOSE)
-            self._log(f"Gripper → CLOSE ({self.angles[5]}°)")
+            self._servo_cmd(6, GRIP2_CLOSE)
+            self._log(f"Gripper → CLOSE ({self.angles[5]}° / {self.angles[6]}°)")
 
         elif t == "motor_reverse":
             self._servo_cmd(5, GRIP_OPEN)
-            self._log(f"Gripper → OPEN ({self.angles[5]}°)")
+            self._servo_cmd(6, GRIP2_OPEN)
+            self._log(f"Gripper → OPEN ({self.angles[5]}° / {self.angles[6]}°)")
 
         elif t == "motor_stop":
-            # ค้างองศาปัจจุบันไว้ (servo ไม่มี free-spin)
             self._servo_cmd(5, self.angles[5])
+            self._servo_cmd(6, self.angles[6])
             self.motor_state = "stop"
-            self._log(f"Gripper → HOLD ({self.angles[5]}°)")
+            self._log(f"Gripper → HOLD ({self.angles[5]}° / {self.angles[6]}°)")
 
         # ── Posture ───────────────────────────────────────────
         elif t == "posture":

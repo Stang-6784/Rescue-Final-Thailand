@@ -51,18 +51,18 @@
 // FLIPPER SERVOS (front + rear only — arm servos NOT attached in this build)
 // ============================================================================ 
 
-// ===== SERVOS 8 ตัว: [0]J1 [1]J2 [2]J3 [3]J4 [4]J5 [5]Gripper [6]Flip-F [7]Flip-R =====
-const uint8_t NUM_SERVOS = 8;
+// ===== SERVOS 9 ตัว: [0]J1 [1]J2 [2]J3 [3]J4 [4]J5 [5]Gripper [6]Gripper2 [7]Flip-F [8]Flip-R =====
+const uint8_t NUM_SERVOS = 9;
 
-//                                      J1  J2  J3  J4  J5  Grip Flip-F Flip-R
-const uint8_t SERVO_PINS[NUM_SERVOS] = { 8,  9,  10,  5,  4,  3,    6,    7 };
-const int SERVO_MIN[NUM_SERVOS]  = { 50, 10,  0,  0,  0, 45, 0, 0 };
-const int SERVO_MAX[NUM_SERVOS]  = {150, 150, 180, 125, 180, 90, 180, 180 };
+//                                       J1    J2  J3   J4   J5   Grip Grip2  Flip-F Flip-R
+const uint8_t SERVO_PINS[NUM_SERVOS] = {  8,   9,  10,   5,   4,   3,   2,     6,     7  };
+const int SERVO_MIN[NUM_SERVOS]  =     { 50,  10,   0,   0,   0,  40,   0,     0,     0 };
+const int SERVO_MAX[NUM_SERVOS]  =     {150, 150, 180, 125, 180, 180, 180,   180,   180 };
+
 // ค่า home ตรงกับฝั่ง Python (rescue.py: SERVO_DEFAULTS / POSTURE_ANGLES["home"])
-const int SERVO_HOME[NUM_SERVOS] = { 98, 90, 157, 100, 95, 70, 85, 90 };  // = POSTURE home
+const int SERVO_HOME[NUM_SERVOS] = { 98, 150, 150,  80,  100, 100,  0,   85,   90 };
 PWMServo servos[NUM_SERVOS];
 int servoDeg[NUM_SERVOS];
-
 
 
 // ============================================================================
@@ -122,7 +122,17 @@ bool motorModeActive = false;
 // ============================================================================
 // คงฟอร์แมตเดิมของ imu.ino ไว้ทุกอย่าง:
 //   - คำสั่ง "cal" -> โหมดแสดงค่า calibration (พิมพ์ "CAL,...")
-//   - คำสั่ง "run" -> โหมดส่งค่าให้ Python (พิมพ์ "IMU,yaw,pitch,roll,sys,gyro,accel,mag")
+//   - คำสั่ง "run" -> โหมดส่งค่าให้ Python/ROS2
+//
+// รูปแบบบรรทัด "run" (ต่อท้ายของเดิม เพื่อ backward-compatible กับ test.py / rescue.py
+// ที่อ่านแค่ฟิลด์ 1..7):
+//   IMU,yaw,pitch,roll,sys,gyro,accel,mag,gx,gy,gz,ax,ay,az
+//     [1..3]  yaw,pitch,roll        = Euler (deg)  ← ของเดิม
+//     [4..7]  sys,gyro,accel,mag    = calibration status 0..3  ← ของเดิม (ไม่ใช่ค่าเซนเซอร์)
+//     [8..10] gx,gy,gz              = angular velocity (rad/s)  ← ใหม่ สำหรับ sensor_msgs/Imu
+//     [11..13] ax,ay,az             = linear acceleration (m/s^2, รวม gravity)  ← ใหม่
+//   ฝั่ง ROS2 (ผ่าน TCP bridge :9000 บน Pi) เอา gx..gz + ax..az ไปสร้าง sensor_msgs/Imu
+//   ให้ Cartographer/lidar fusion ใช้ได้ตรงๆ
 // IMU เป็น optional: ถ้า boot แล้วไม่เจอ จะ "ข้าม" ไม่ block เพื่อให้มอเตอร์ยังทำงานได้
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x29);
 bool imuReady = false;
@@ -409,11 +419,18 @@ void readAndSendImu() {
   if (!imuReady) return;
 
   imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
-  imu::Vector<3> acc   = bno.getVector(Adafruit_BNO055::VECTOR_ACCELEROMETER);
+  imu::Vector<3> acc   = bno.getVector(Adafruit_BNO055::VECTOR_ACCELEROMETER);  // m/s^2 (รวม gravity)
+  imu::Vector<3> gyr   = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);      // deg/s (Adafruit default)
 
   float yaw_raw   = euler.x();
   float pitch_raw = euler.y();
   float roll_raw  = euler.z();
+
+  // BNO055 (Adafruit lib) คืน gyro เป็น deg/s → แปลงเป็น rad/s ให้ตรงกับ sensor_msgs/Imu
+  const float DEG2RAD = 0.01745329252f;
+  float gx = gyr.x() * DEG2RAD;
+  float gy = gyr.y() * DEG2RAD;
+  float gz = gyr.z() * DEG2RAD;
 
   uint8_t sys, gyro, accel, mag;
   bno.getCalibration(&sys, &gyro, &accel, &mag);
@@ -447,7 +464,20 @@ void readAndSendImu() {
     Serial.print(",");
     Serial.print(accel);
     Serial.print(",");
-    Serial.println(mag);
+    Serial.print(mag);
+    // ── ค่าเซนเซอร์จริงสำหรับ ROS2 sensor_msgs/Imu ──
+    Serial.print(",");
+    Serial.print(gx, 4);   // angular velocity x (rad/s)
+    Serial.print(",");
+    Serial.print(gy, 4);   // angular velocity y (rad/s)
+    Serial.print(",");
+    Serial.print(gz, 4);   // angular velocity z (rad/s)
+    Serial.print(",");
+    Serial.print(acc.x(), 3);  // linear acceleration x (m/s^2)
+    Serial.print(",");
+    Serial.print(acc.y(), 3);  // linear acceleration y (m/s^2)
+    Serial.print(",");
+    Serial.println(acc.z(), 3); // linear acceleration z (m/s^2)
   }
 }
 

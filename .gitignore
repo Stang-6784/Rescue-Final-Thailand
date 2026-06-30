@@ -1,2 +1,7 @@
 # Model weights (large binaries — keep out of git)
 AI_Detection/best.pt
+
+# Ignore file models
+/models
+*.stl
+*.ini
