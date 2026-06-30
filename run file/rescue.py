@@ -50,7 +50,7 @@ NUM_SERVOS = 9
 SERVO_NAMES = [
     "Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper", "Gripper2", "Flip-F","Flip-R"
 ]
-SERVO_DEFAULTS = [98, 150, 150,  80,  100, 100,  0,   85,   90]
+SERVO_DEFAULTS = [98, 150, 140,  80,  100, 100,  0,   85,   90]
 SERVO_MINS     = [50,  10,   0,  0,  0, 0, 0, 0, 0]
 SERVO_MAXS     = [150, 170, 157, 180, 170, 180, 180, 180, 180]
 
@@ -64,8 +64,18 @@ GRIP2_MID   = (GRIP2_OPEN + GRIP2_CLOSE) // 2
 
 HOME_Y, HOME_Z, HOME_P = 30.0, 18.0, 30.0
 
+# ── Servo slew (ให้ servo "ค่อยๆ หมุน" ขณะเปลี่ยนท่า แทนกระชากไปค่าปลายทาง) ──
+# Teensy (.ino) จำกัดความเร็วจริงของ servo อยู่แล้ว; ฝั่งนี้ส่งองศา "ทีละขั้น"
+# ด้วยอัตราเดียวกัน เพื่อให้โมเดล 3D + UI ขยับตามไปพร้อมกับ servo จริง.
+#   SERVO_SLEW_DPS  = องศา/วินาที (ต่ำ = ช้าลง) — ตั้งให้ตรงกับ .ino
+#   SERVO_SLEW_HZ   = ความถี่ส่งคำสั่งระหว่างไล่ (เฟรม/วินาที)
+#   SERVO_SLEW_ON   = False → ปิด, ส่งค่าปลายทางทีเดียวแบบเดิม
+SERVO_SLEW_DPS = 90.0
+SERVO_SLEW_HZ  = 50.0
+SERVO_SLEW_ON  = True
+
 POSTURE_ANGLES = {
-    "home":   [98, 150, 150,  80,  100, 100,  0,   85,   90],
+    "home":   [98, 150, 140,  80,  100, 100,  0,   85,   90],
     "guard":  [98, 150, 150,  80,  100, 100,  0, 154, 154],
     "giraff": [98, 150, 150,  80,  100, 100,  0, 27,  38],
     "stair":  [98, 150, 138, 80,  100, 100,  0, 118, 52],
@@ -76,7 +86,7 @@ POSTURE_ANGLES = {
 # giraff/stair มีค่า default แต่ override ได้จาก UI
 CUSTOM_POSTURES = {
     "giraff":   [98, 150, 157,  100, 100, 70, 90,  27,  38],   # F4 default
-    "stair":    [50,130, 90, 120, 100, 70, 90, 135, 105],   # F5 default
+    "stair":    [98, 150, 138, 80,  100, 100,  0, 118, 52],   # F5 default
     "K-Rail": [98, 150, 157, 100, 100, 70, 90, 78, 154],   # F6 ด่าน K-Rails
     "custom_2": [106, 103, 0, 69, 100, 70, 90, 140, 45],   # F7 QR SCAN + Flipper down
     "custom_3": [60, 130,  0,  90, 100, 70, 90, 100, 100],   # F8 default = HOME
@@ -382,6 +392,10 @@ class RobotController:
         self._send_loop_running = True
         threading.Thread(target=self._send_loop, daemon=True).start()
 
+        # ── Servo slew (ไล่องศาแบบค่อยเป็นค่อยไปขณะเปลี่ยนท่า) ──
+        self._slew_thread = None
+        self._slew_stop   = threading.Event()
+
     # ── Send Loop ────────────────────────────────────────────
     def _send_loop(self):
         """ส่ง move_start ทุก 20ms พร้อม lin/ang ล่าสุด"""
@@ -436,6 +450,7 @@ class RobotController:
 
     # ── Servo ────────────────────────────────────────────────
     def _servo_cmd(self, idx, angle):
+        self._slew_stop.set()   # สั่ง joint เดี่ยว → ยกเลิก ramp ท่าที่กำลังวิ่งอยู่
         safe = _sv_clamp(idx, angle)
         self.angles[idx] = safe
         # Gripper (idx 5) เป็น PWMServo ปรับองศาได้จริงบน Teensy (ช่วง 45–90°)
@@ -443,6 +458,57 @@ class RobotController:
         if idx == 5:
             self.motor_state = "reverse" if safe >= GRIP_MID else "grip"
         _send_pi({"type":"servo_set","index":idx,"angle":safe})
+
+    # ── Servo ramp (ค่อยๆ ไล่องศา → target ให้ servo หมุนช้าลง + 3D/UI sync) ──
+    def _ramp_to(self, target):
+        """ไล่องศาจากท่าปัจจุบัน (self.angles) ไปยัง target ทีละขั้น.
+        รันใน thread แยก ไม่ block ตัวจัดการคำสั่ง, และยกเลิก ramp เก่าทันที
+        ถ้ามีท่าใหม่เข้ามาระหว่างทาง."""
+        target = [_sv_clamp(i, a) for i, a in enumerate(target)]
+
+        # ยกเลิก ramp เดิมที่ยังวิ่งอยู่
+        self._slew_stop.set()
+        if self._slew_thread and self._slew_thread.is_alive():
+            self._slew_thread.join(timeout=0.5)
+
+        if not SERVO_SLEW_ON:
+            self.angles = list(target)
+            for i, a in enumerate(target):
+                _send_pi({"type": "servo_set", "index": i, "angle": a})
+            _push_ws({"type": "state", **self._state_dict()})
+            return
+
+        stop  = threading.Event()
+        self._slew_stop   = stop
+        start = list(self.angles)
+
+        def run():
+            dt       = 1.0 / SERVO_SLEW_HZ
+            max_step = max(0.5, SERVO_SLEW_DPS * dt)   # องศา/เฟรม
+            cur  = [float(a) for a in start]
+            last = [int(round(c)) for c in cur]
+            while not stop.is_set():
+                done = True
+                for i in range(NUM_SERVOS):
+                    d = target[i] - cur[i]
+                    if abs(d) <= max_step:
+                        cur[i] = float(target[i])
+                    else:
+                        cur[i] += max_step if d > 0 else -max_step
+                        done = False
+                ang = [int(round(c)) for c in cur]
+                for i in range(NUM_SERVOS):
+                    if ang[i] != last[i]:      # ส่งเฉพาะ servo ที่ค่าขยับ
+                        _send_pi({"type": "servo_set", "index": i, "angle": ang[i]})
+                        last[i] = ang[i]
+                self.angles = ang
+                _push_ws({"type": "state", **self._state_dict()})
+                if done:
+                    break
+                time.sleep(dt)
+
+        self._slew_thread = threading.Thread(target=run, daemon=True)
+        self._slew_thread.start()
 
     # ── Posture ──────────────────────────────────────────────
     def _send_posture(self, name):
@@ -455,11 +521,9 @@ class RobotController:
             # Python เป็นเจ้าของค่าองศา → ส่ง servo_set รายตัวให้ Teensy
             # (Teensy แค่รับค่ามาเขียนลง servo ไม่ต้องเก็บค่า home เอง)
             angles = POSTURE_ANGLES['home']
-            self.angles = list(angles)
             self.motor_state = "stop"
             self._log(f"Posture → home: {angles}")
-            for idx, angle in enumerate(angles):
-                _send_pi({"type":"servo_set","index":idx,"angle":_sv_clamp(idx, angle)})
+            self._ramp_to(angles)
             return
         # ── F7 QR SCAN — ส่ง GOTO ตรงๆ เหมือน F2 ──
         if name == 'custom_2':
@@ -479,22 +543,17 @@ class RobotController:
             if angles is None:
                 self._log(f"Posture {name} not set — กำหนดใน Settings UI")
                 return
-            self.angles = list(angles)
             self.motor_state = "stop"
             self._log(f"Posture → {name}: {angles}")
-            for idx, angle in enumerate(angles):
-                _send_pi({"type":"servo_set","index":idx,"angle":_sv_clamp(idx, angle)})
-            _push_ws({"type":"state",**self._state_dict()})
+            self._ramp_to(angles)
             return
 
         angles = POSTURE_ANGLES.get(name)
         if not angles:
             self._log(f"Unknown posture: {name}"); return
-        self.angles = list(angles)
         self.motor_state = "stop"
         self._log(f"Posture → {name}")
-        for idx, angle in enumerate(angles):
-            _send_pi({"type":"servo_set","index":idx,"angle":angle})
+        self._ramp_to(angles)
 
     # ── Wheel ────────────────────────────────────────────────
     def do_lock(self):

@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════
 const SERVO_NAMES = ["Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper","Gripper2","Flip-F","Flip-R"];
 const SERVO_KEYS_MAP = ['y','u','i','o','h','j','n','k','l'];
-const SERVO_DEFAULTS = [98, 150, 150,  80,  100, 100,  0,   85,   90];
+const SERVO_DEFAULTS = [98, 150, 140,  80,  100, 100,  0,   85,   90];
 const SERVO_MINS     = [50,  10,   0,   0,   0,  40,   0,     0,     0];
 const SERVO_MAXS     = [150, 150, 180, 125, 180, 180, 180,   180,   180];
 const NUM_SERVOS     = 9;

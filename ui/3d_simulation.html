@@ -615,9 +615,9 @@ window.toggleWS = () => {
 //   idx     : position in the angles[] array coming from control.html
 //   neutral : servo angle treated as this mover's 0° (rest pose) — subtracted
 //   invert  : set true if a joint turns the WRONG way in the sim
-// Servo order in control.html:
-//   0 J1 Shoulder · 1 J2 Elbow · 2 J3 Extend · 3 J4 Wrist
-//   4 J5 Tool · 5 J6 Gripper · 6 Flip-F · 7 Flip-R   (4,5 have no 3D mover)
+// Servo order in control.html (9 channels — Gripper2 added at idx 6):
+//   0 Joint1 · 1 Joint2 · 2 Joint3 · 3 Joint4 · 4 Joint5
+//   5 Gripper · 6 Gripper2 · 7 Flip-F · 8 Flip-R   (4,5,6 have no 3D mover)
 // >>> If a joint moves backwards, flip its `invert`. If its rest pose looks
 //     off-centre, adjust its `neutral`. Tune only this table. <<<
 const CONSOLE_MAP = {
@@ -625,8 +625,8 @@ const CONSOLE_MAP = {
     j2:    { idx: 1, neutral: 170, invert: true  },
     j3:    { idx: 2, neutral: 157, invert: false },
     j4:    { idx: 3, neutral: 90,  invert: false },
-    front: { idx: 6, neutral: 90,  invert: false },
-    back:  { idx: 7, neutral: 90,  invert: false },
+    front: { idx: 7, neutral: 90,  invert: false },
+    back:  { idx: 8, neutral: 90,  invert: false },
 };
 
 // ── IMU tilt (เอียงทั้งหุ่นตามค่าจริงจาก BNO055 ผ่าน rescue.py {type:'imu',...}) ──

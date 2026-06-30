@@ -62,7 +62,20 @@ const int SERVO_MAX[NUM_SERVOS]  =     {150, 150, 180, 125, 180, 180, 180,   180
 // ค่า home ตรงกับฝั่ง Python (rescue.py: SERVO_DEFAULTS / POSTURE_ANGLES["home"])
 const int SERVO_HOME[NUM_SERVOS] = { 98, 150, 150,  80,  100, 100,  0,   85,   90 };
 PWMServo servos[NUM_SERVOS];
-int servoDeg[NUM_SERVOS];
+int servoDeg[NUM_SERVOS];   // ค่าองศาที่ "เขียนลง servo จริง" ล่าสุด
+
+// ── Servo slew (จำกัดความเร็วการหมุน servo ขณะเปลี่ยนท่า) ───────────────────
+// แทนที่จะกระชากไปค่าปลายทางทันที (เต็มสปีด servo) เราเก็บ "เป้าหมาย" ไว้แล้ว
+// ค่อยๆ ขยับ servoCurrent เข้าหาเป้าหมายทีละนิดในทุก loop → servo หมุนช้า/นุ่มขึ้น.
+//   SERVO_SLEW_DPS = องศาต่อวินาที สูงสุด (ลด = ช้าลง, เพิ่ม = เร็วขึ้น)
+//                    *** ควรตั้งให้ตรงกับ SERVO_SLEW_DPS ใน rescue.py เพื่อให้
+//                        โมเดล 3D / UI ขยับตรงกับ servo จริง ***
+//   ตั้งค่าสูงมาก (เช่น 100000) = ปิด easing กลับไปวิ่งเต็มสปีดแบบเดิม
+const float    SERVO_SLEW_DPS       = 90.0f;  // ~2 วินาที ต่อการกวาด 180°
+const uint32_t SERVO_SLEW_PERIOD_MS = 15;     // อัปเดต ~66 Hz (นุ่มพอ ไม่กิน CPU)
+float    servoCurrent[NUM_SERVOS];            // องศาปัจจุบัน (ทศนิยม) ระหว่างไล่
+int      servoTarget[NUM_SERVOS];             // องศาเป้าหมายที่สั่งล่าสุด
+uint32_t lastServoSlewMs = 0;
 
 
 // ============================================================================
@@ -383,12 +396,34 @@ static int clampServo(int idx, int deg){
   if (deg > SERVO_MAX[idx]) deg = SERVO_MAX[idx];
   return deg;
 }
+// ตั้ง "เป้าหมาย" ของ servo — การหมุนจริงเกิดทีละนิดใน updateServoEasing()
 void setServo(int idx, int deg){
   if (idx < 0 || idx >= NUM_SERVOS) return;
-  servoDeg[idx] = clampServo(idx, deg);
-  servos[idx].write(servoDeg[idx]);
+  servoTarget[idx] = clampServo(idx, deg);
   Serial.print("LOG: servo "); Serial.print(idx);
-  Serial.print(" -> "); Serial.println(servoDeg[idx]);
+  Serial.print(" -> "); Serial.println(servoTarget[idx]);
+}
+
+// ค่อยๆ ขยับ servoCurrent เข้าหา servoTarget (non-blocking, เรียกทุก loop)
+void updateServoEasing(){
+  uint32_t now = millis();
+  uint32_t dt  = now - lastServoSlewMs;
+  if (dt < SERVO_SLEW_PERIOD_MS) return;
+  lastServoSlewMs = now;
+
+  float maxStep = SERVO_SLEW_DPS * (dt / 1000.0f);   // องศาที่ขยับได้ในรอบนี้
+  if (maxStep <= 0.0f) maxStep = 1000.0f;            // กัน 0 → เท่ากับปิด easing
+  for (int i = 0; i < NUM_SERVOS; i++){
+    float diff = (float)servoTarget[i] - servoCurrent[i];
+    if (diff >  maxStep) diff =  maxStep;
+    if (diff < -maxStep) diff = -maxStep;
+    servoCurrent[i] += diff;
+    int w = (int)lroundf(servoCurrent[i]);
+    if (w != servoDeg[i]) {        // เขียนเฉพาะตอนค่าเปลี่ยน (ลดภาระ)
+      servoDeg[i] = w;
+      servos[i].write(w);
+    }
+  }
 }
 // "SERVO <idx> <deg>"  ใช้ได้ครบทั้ง 8 ตัว
 void handleServoCommand(const String &line){
@@ -628,9 +663,12 @@ void setup() {
   // Flipper servos: attach + ไปท่า home (กลางๆ) ทันทีตอน boot
   for (int i = 0; i < NUM_SERVOS; i++){
     servos[i].attach(SERVO_PINS[i]);
-    servoDeg[i] = SERVO_HOME[i];
+    servoDeg[i]     = SERVO_HOME[i];
+    servoCurrent[i] = (float)SERVO_HOME[i];   // เริ่มที่ home (ไม่มีการไล่ตอน boot)
+    servoTarget[i]  = SERVO_HOME[i];
     servos[i].write(SERVO_HOME[i]);
   }
+  lastServoSlewMs = millis();
 
   // หมายเหตุ: ยังไม่ enter motor mode ตอน boot โดยตั้งใจ
   // มอเตอร์จะ "ปลุก" ก็ต่อเมื่อได้รับคำสั่ง drive/motor/motor_sync ครั้งแรก (ปลอดภัยกว่า)
@@ -667,4 +705,7 @@ void loop() {
     lastImuMs = millis();
     readAndSendImu();
   }
+
+  // 7) ไล่องศา servo เข้าหาเป้าหมายทีละนิด (จำกัดความเร็วการหมุน, non-blocking)
+  updateServoEasing();
 }
