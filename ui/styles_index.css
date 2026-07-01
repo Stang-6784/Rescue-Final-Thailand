@@ -226,14 +226,42 @@
     /* ══ LIDAR MAP ══ */
     #mini-lidar-wrap { flex-shrink: 0; height: 180px; position: relative; border-top: 1px solid var(--border); overflow: hidden; background: #04060a; }
     #lidarFrame { width: 100%; height: 100%; border: none; display: block; background: #04060a; }
-    #mini-lidar-label { position: absolute; top: 5px; left: 7px; z-index: 5; display: flex; align-items: center; gap: 6px; font-family: var(--head); font-size: 7px; font-weight: 700; letter-spacing: 2px; color: var(--text-dim); background: rgba(4,6,8,0.85); padding: 2px 7px; border-radius: 20px; border: 1px solid var(--border); pointer-events: none; }
-    #lidarStatus { font-family: var(--head); font-size: 7px; font-weight: 700; letter-spacing: 1px; padding: 1px 6px; border-radius: 20px; border: 1px solid var(--border2); }
+    #mini-lidar-label { position: absolute; bottom: 5px; right: 7px; z-index: 5; display: flex; align-items: center; gap: 4px; font-family: var(--head); font-size: 6px; font-weight: 700; letter-spacing: 1px; color: var(--text-dim); background: rgba(4,6,8,0.75); padding: 1px 5px; border-radius: 20px; border: 1px solid var(--border); pointer-events: none; }
+    #lidarStatus { font-family: var(--head); font-size: 6px; font-weight: 700; letter-spacing: 1px; padding: 1px 5px; border-radius: 20px; border: 1px solid var(--border2); }
     #lidarStatus.lidar-live  { color: var(--ok); border-color: var(--ok); box-shadow: var(--ok-glow); }
     #lidarStatus.lidar-stale { color: var(--text-dim); border-color: var(--border2); }
     #lidar-range-tag { position: absolute; bottom: 5px; right: 7px; z-index: 5; font-family: var(--mono); font-size: 9px; color: var(--accent); background: rgba(4,6,8,0.85); padding: 1px 6px; border-radius: 20px; border: 1px solid var(--border); pointer-events: none; }
     #mini-lidar-label .lidar-btn { font-family: var(--head); font-size: 7px; font-weight: 700; letter-spacing: 1px; padding: 1px 6px; border-radius: 20px; border: 1px solid var(--border2); color: var(--text-dim); background: var(--bg2); cursor: pointer; pointer-events: auto; transition: all 0.15s; }
     #mini-lidar-label #lidar-csv-btn:hover   { border-color: var(--accent); color: var(--accent); }
     #mini-lidar-label #lidar-reset-btn:hover { border-color: var(--warn); color: var(--warn); }
+    #mini-lidar-label .lidar-mode-active {
+      border-color: var(--accent) !important;
+      color: var(--accent) !important;
+      background: rgba(0,212,255,0.08) !important;
+    }
+    .footer-sep {
+    width: 1px; height: 14px;
+    background: var(--border2);
+    margin: 0 4px;
+    flex-shrink: 0;
+    }
+    .footer-lidar-btn {
+        font-family: var(--head); font-size: 9px; font-weight: 700;
+        letter-spacing: 1px; padding: 2px 8px;
+        border: 1px solid var(--border2); border-radius: 20px;
+        color: var(--text-dim); background: var(--bg2);
+        cursor: pointer; transition: all 0.15s; flex-shrink: 0;
+    }
+    .footer-lidar-btn:hover     { border-color: var(--accent); color: var(--accent); }
+    #lidar-reset-btn:hover      { border-color: var(--warn) !important; color: var(--warn) !important; }
+    .lidar-mode-active {
+        border-color: var(--accent) !important;
+        color: var(--accent) !important;
+        background: rgba(0,212,255,0.08) !important;
+    }
+    .footer-sep:first-of-type {
+    margin-left: auto;
+    }
 
     #centre { display: flex; flex-direction: column; overflow: hidden; position: relative; }
     #dual-cam { display: grid; grid-template-columns: 1fr 1px 1fr; flex: 1; overflow: hidden; min-height: 0; max-height: calc(100% - 110px); }
@@ -276,12 +304,6 @@
     .cam-crosshair::before { width: 1px; height: 100%; left: 50%; transform: translateX(-50%); }
     .cam-crosshair::after  { height: 1px; width: 100%; top: 50%; transform: translateY(-50%); }
 
-    #ai-panel { position: absolute; inset: 0; z-index: 20; background: var(--bg2); display: none; flex-direction: column; }
-    #ai-panel.open { display: flex; }
-    #ai-panel-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-    #ai-panel-header span { font-family: var(--head); font-size: 8px; font-weight: 700; letter-spacing: 2px; color: var(--accent); flex: 1; }
-    #ai-close-btn { font-family: var(--head); font-size: 7px; font-weight: 700; color: var(--text-dim); cursor: pointer; letter-spacing: 1px; background: none; border: 1px solid var(--border2); padding: 2px 8px; border-radius: 20px; transition: all 0.2s; }
-    #ai-close-btn:hover { color: var(--danger); border-color: var(--danger); }
 
     #snapBtn { background: linear-gradient(135deg, var(--accent-d), #003344); border: 1px solid var(--accent2); color: var(--accent); padding: 6px 24px; font-family: var(--head); font-weight: 700; font-size: 8px; letter-spacing: 2px; cursor: pointer; border-radius: var(--radius); margin: 5px auto; display: block; flex-shrink: 0; transition: all 0.2s; }
     #snapBtn:hover { background: linear-gradient(135deg, var(--accent2), var(--accent-d)); box-shadow: var(--glow); }
@@ -357,9 +379,6 @@
     #motorBadge.stop    { color: var(--text-dim); border-color: var(--border2); }
     #motorBadge.grip    { color: var(--ok); border-color: #00ff8855; background: #00ff8810; }
     #motorBadge.reverse { color: var(--warn); border-color: #ffaa0055; background: #ffaa0010; }
-
-    #ai-trigger-btn { font-family: var(--head); font-size: 10px; font-weight: 700; letter-spacing: 1px; color: var(--text-med); background: var(--surface2); cursor: pointer; border: 1px solid var(--border2); padding: 3px 10px; border-radius: 20px; flex-shrink: 0; transition: all 0.2s; }
-    #ai-trigger-btn:hover { border-color: var(--accent); color: var(--accent); }
 
     #fullscreen-overlay { display: none; position: fixed; inset: 0; z-index: 99999; background: #000; flex-direction: column; align-items: center; justify-content: center; }
     #fullscreen-overlay.open { display: flex; }

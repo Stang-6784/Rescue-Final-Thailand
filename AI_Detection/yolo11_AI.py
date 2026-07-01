@@ -35,7 +35,7 @@ def allow_iframe(response):
 #   Pi (listen): libcamera-vid -t 0 --inline --width 1280 --height 720 --framerate 30 \
 #                  --codec h264 --libav-format mpegts -o "tcp://0.0.0.0:8888?listen=1"
 #   เครื่องนี้ connect เข้าเป็น client ที่ IP:port ของ Pi
-CAM_URL = "tcp://192.168.1.67:8888"
+CAM_URL = "http://192.168.1.67:8090/stream.mjpg"
 
 VIEW_WIDTH = 640
 VIEW_HEIGHT = 480
@@ -75,6 +75,10 @@ AI_CONF   = 0.35
 AI_IOU    = 0.45
 AI_IMGSZ  = 640
 AI_TASK   = "detect"
+# ความละเอียดภาพ AI: ใช้ 16:9 ให้ตรงกับกล้อง (กล้อง Pi สตรีม 1280x720)
+# → ภาพไม่ถูกบีบเป็น 4:3 จึงเห็นมุมภาพ (FOV) เต็มกว้าง + คมชัดขึ้นมาก
+AI_VIEW_WIDTH  = 1280
+AI_VIEW_HEIGHT = 720
 
 # ===== AI CSV config =====
 AI_CSV_FILE  = os.path.join(BASE_DIR, "ai_detection_log.csv")
@@ -114,10 +118,11 @@ yolo_conf         = AI_CONF
 yolo_iou          = AI_IOU
 yolo_imgsz        = AI_IMGSZ
 yolo_latest_dets  = []
-yolo_fps          = 0.0
+yolo_fps          = 30
 yolo_log          = []
 yolo_full_log     = []
 yolo_lock         = threading.Lock()
+yolo_infer_lock   = threading.Lock()   # กัน predict() ถูกเรียกซ้อนกันจาก realtime + snapshot
 
 # =========================================================
 # AI HELPERS
@@ -146,15 +151,16 @@ def load_yolo_model(path):
 
 def run_yolo_on_frame(frame):
     global yolo_latest_dets, yolo_fps, yolo_log, yolo_full_log
-    img = cv2.resize(frame, (VIEW_WIDTH, VIEW_HEIGHT))
+    img = cv2.resize(frame, (AI_VIEW_WIDTH, AI_VIEW_HEIGHT))
     if not yolo_model_loaded or yolo_model is None:
         cv2.putText(img, "AI: model ยังไม่โหลด", (10,30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,80,255), 2)
         return img, []
     t0 = time.perf_counter()
     try:
-        results = yolo_model.predict(img, conf=yolo_conf, iou=yolo_iou,
-                                     imgsz=yolo_imgsz, verbose=False)
+        with yolo_infer_lock:
+            results = yolo_model.predict(img, conf=yolo_conf, iou=yolo_iou,
+                                         imgsz=yolo_imgsz, verbose=False)
     except Exception as e:
         annotated = img.copy()
         cv2.putText(annotated, f"AI error: {e}", (10,30),
@@ -188,7 +194,7 @@ def run_yolo_on_frame(frame):
             cv2.fillPoly(overlay, [pts], color)
         annotated = cv2.addWeighted(annotated, 0.6, overlay, 0.4, 0)
     cv2.putText(annotated, f"YOLO11 | {len(dets)} obj | {fps_val:.1f} FPS",
-                (8, VIEW_HEIGHT-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200,200,200), 1)
+                (8, AI_VIEW_HEIGHT-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
 
     with yolo_lock:
         yolo_latest_dets = dets
@@ -385,7 +391,7 @@ INDEX_HTML = """
     <div class="ai-modal-body">
       <div class="ai-feed-col">
         <div class="ai-feed-box">
-          <img id="aiFeed" src="/video_feed" alt="AI Feed">
+          <img id="aiFeed" alt="AI Feed">
           <div class="ai-feed-badge" id="aiFeedBadge">YOLO11 — กำลังรอ...</div>
           <div id="aiSnapOverlay" class="ai-snap-overlay">
             <img id="aiSnapImg" alt="AI Snapshot">
@@ -516,8 +522,10 @@ async function setMode(mode){
 }
 async function scanQR() {
   const btn = document.getElementById('scanBtn');
+  const feed = document.getElementById('liveFeed');
   btn.disabled = true;
   btn.textContent = '⏳ Scanning...';
+  feed.src = '';   // ปล่อย connection สตรีมระหว่างสแกน กันภาพค้าง
   try {
     const r = await fetch('/scan_qr');
     const d = await r.json();
@@ -542,10 +550,13 @@ async function scanQR() {
   } finally {
     btn.disabled = false;
     btn.textContent = '⬡ SCAN QR';
+    feed.src = '/video_feed?' + Date.now();   // ต่อสตรีมใหม่เสมอ กันค้าง
   }
 }
 function closeSnap() {
   document.getElementById('snapOverlay').classList.remove('show');
+  // reload สตรีมสด เผื่อค้างตอนเปิด snapshot
+  document.getElementById('liveFeed').src = '/video_feed?' + Date.now();
 }
 async function exportCSV(){
   try{
@@ -631,7 +642,9 @@ async function stopAI(){
 
 async function aiSnapshot(){
   const btn=document.getElementById('aiSnapBtn');
+  const feed=document.getElementById('aiFeed');
   btn.disabled=true; btn.textContent='⏳...';
+  feed.src='';   // ปล่อย connection สตรีมระหว่างถ่าย กันภาพค้าง
   try{
     const r=await fetch('/ai/snapshot'); const d=await r.json();
     if(d.image_b64){
@@ -644,10 +657,14 @@ async function aiSnapshot(){
       res.style.color='#7b9fff';
     }else{ res.textContent='No objects'; res.style.color='#ffc14d'; }
   }catch(e){ alert('Error: '+e); }
-  finally{ btn.disabled=false; btn.textContent='📸 Snapshot'; }
+  finally{
+    btn.disabled=false; btn.textContent='📸 Snapshot';
+    feed.src='/video_feed?'+Date.now();   // ต่อสตรีมใหม่เสมอ กันค้าง
+  }
 }
 function closeAISnap(){
   document.getElementById('aiSnapOverlay').classList.remove('show');
+  document.getElementById('aiFeed').src='/video_feed?'+Date.now();
 }
 
 async function refreshAISt(){
@@ -805,7 +822,7 @@ def distance(p1, p2):
     return float(np.linalg.norm(np.array(p1,dtype=np.float32) - np.array(p2,dtype=np.float32)))
 
 def frame_to_b64(frame):
-    ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+    ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
     if not ok:
         return ""
     return base64.b64encode(buf.tobytes()).decode("utf-8")
@@ -1121,7 +1138,6 @@ def camera_loop():
                     log("camera_loop: read failed, reconnecting..."); break
                 with frame_lock:
                     latest_raw_frame = frame.copy()
-                    latest_display_frame = frame.copy()
                 new_frame_event.set()
         except Exception as e:
             camera_ok = False
@@ -1172,12 +1188,26 @@ def realtime_loop():
 # =========================================================
 # VIDEO STREAM
 # =========================================================
+STREAM_FPS = 15                      # cap อัตราสตรีม กัน encode/decode รัวจน UI ค้าง
+_STREAM_MIN_DT = 1.0 / STREAM_FPS
+
 def generate_video():
+    last = 0.0
     while True:
+        # จำกัด FPS: ถ้ายังไม่ถึงเวลาเฟรมถัดไป ให้รอก่อน (กัน busy-loop กิน CPU เต็มคอร์)
+        dt = time.time() - last
+        if dt < _STREAM_MIN_DT:
+            time.sleep(_STREAM_MIN_DT - dt)
         frame = get_latest_display_frame()
         if frame is None:
             time.sleep(0.05); continue
-        ok, jpeg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50])
+        last = time.time()
+        # สตรีมแบบรักษาสัดส่วนเดิม (ไม่บีบเป็น 4:3) + เพิ่มความคมชัด
+        h, w = frame.shape[:2]
+        max_w = 1280
+        if w > max_w:
+            frame = cv2.resize(frame, (max_w, int(h * max_w / w)))
+        ok, jpeg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
         if not ok:
             continue
         yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n")
@@ -1206,12 +1236,19 @@ def set_mode():
 
 @app.route("/status", methods=["GET"])
 def status():
+    # คลาส hazmat ที่กำลังเจอ (เฉพาะโหมด ai) — ให้ rescue.py poll ไปปักหมุดบนแผนที่
+    if detect_mode == "ai":
+        with yolo_lock:
+            ai_classes = [d["class"] for d in yolo_latest_dets]
+    else:
+        ai_classes = []
     return jsonify({
         "ok": True, "camera_ok": camera_ok, "mode": detect_mode,
         "motion_found": motion_found, "motion_center": motion_center,
         "locked": locked_target is not None,
         "qr_found": latest_qr_found, "qr": latest_qr_text,
         "all_qr": latest_qr_all, "qr_log": qr_read_log,
+        "ai_classes": ai_classes,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
     }), 200
 
@@ -1299,6 +1336,9 @@ def route_clear_log():
 def ai_load():
     body = request.get_json(silent=True) or {}
     path = (body.get("path") or AI_MODEL_PATH).strip()
+    # path แบบ relative → อ้างอิงจากโฟลเดอร์สคริปต์ (ไม่ขึ้นกับ CWD)
+    if not os.path.isabs(path):
+        path = os.path.join(BASE_DIR, path)
     ok   = load_yolo_model(path)
     return jsonify({
         "ok":     ok,

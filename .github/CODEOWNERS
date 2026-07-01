@@ -13,7 +13,7 @@
 /ui/                    @Stang-6784
 
 # โมเดล 3D และไฟล์โมเดล
-/models/                @Stang-6784
+/ui/models/             @Stang-6784
 *.pt                    @Stang-6784
 
 # การตั้งค่าและ workflow ของ repo

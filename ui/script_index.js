@@ -1,12 +1,12 @@
 // ═══════════════════════════════════════
 //  CONFIG
 // ═══════════════════════════════════════
-const SERVO_NAMES    = ["Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper","Flip-F","Flip-R"];
-const SERVO_KEYS_MAP = ['y','u','i','o','h','j','k','l'];
-const SERVO_DEFAULTS = [98, 150, 157,  100, 95, 70,  85,  90];
-const SERVO_MINS     = [ 50,  10,   0,   0,   0,  45,  0,  0];
-const SERVO_MAXS     = [150, 150, 180, 180, 180,  90, 180, 180];
-const NUM_SERVOS     = 8;
+const SERVO_NAMES = ["Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper","Gripper2","Flip-F","Flip-R"];
+const SERVO_KEYS_MAP = ['y','u','i','o','h','j','n','k','l'];
+const SERVO_DEFAULTS = [98, 150, 140,  80,  100, 100,  0,   85,   90];
+const SERVO_MINS     = [50,  10,   0,   0,   0,  40,   0,     0,     0];
+const SERVO_MAXS     = [150, 150, 180, 125, 180, 180, 180,   180,   180];
+const NUM_SERVOS     = 9;
 
 let MOVE_KEYS = new Set(['w','a','s','d','q','e','z','c']);
 const POSTURE_FKEYS  = {'F1':'home','F2':'horizontal','F3':'guard','F4':'giraff','F5':'stair','F6':'custom_1','F7':'custom_2','F8':'custom_3','F9':'custom_4'};
@@ -707,69 +707,62 @@ function servoStep(dir) {
 function setStep(n) { state.servo_step=n; sendCmd({type:'set_step',step:n}); renderAll(); }
 // sendPosture defined below in CUSTOM POSTURE section
 
+let activeGripper = 1; // 1 หรือ 2 — ใช้ตอนสั่งเดี่ยว (ผ่าน selectServo/servoStep)
+
 function gripOpen() {
   state.angles[5] = 70;
+  state.angles[6] = 180;
   state.motor_state = 'reverse';
   sendCmd({type:'servo_set', index:5, angle:70});
-  addLog('J6 Gripper → OPEN (70°)', 'ok', 'move');
+  sendCmd({type:'servo_set', index:6, angle:180});
+  addLog('Gripper 1+2 → OPEN', 'ok', 'move');
   renderAll();
 }
 
 function gripClose() {
   state.angles[5] = 10;
+  state.angles[6] = 0;
   state.motor_state = 'grip';
   sendCmd({type:'servo_set', index:5, angle:10});
-  addLog('J6 Gripper → CLOSE (10°)', 'ok', 'move');
+  sendCmd({type:'servo_set', index:6, angle:0});
+  addLog('Gripper 1+2 → CLOSE', 'ok', 'move');
+  renderAll();
+}
+
+function setActiveGripper(n) {
+  activeGripper = n;
+  document.getElementById('gripBtn1')?.classList.toggle('active', n===1);
+  document.getElementById('gripBtn2')?.classList.toggle('active', n===2);
+  addLog(`Gripper select → #${n}`, 'ok', 'move');
+}
+
+function gripOpenSingle() {
+  const idx = activeGripper === 1 ? 5 : 6;
+  const val = activeGripper === 1 ? 70 : 180;
+  state.angles[idx] = val;
+  sendCmd({type:'servo_set', index:idx, angle:val});
+  addLog(`Gripper #${activeGripper} → OPEN`, 'ok', 'move');
+  renderAll();
+}
+
+function gripCloseSingle() {
+  const idx = activeGripper === 1 ? 5 : 6;
+  const val = activeGripper === 1 ? 10 : 0;
+  state.angles[idx] = val;
+  sendCmd({type:'servo_set', index:idx, angle:val});
+  addLog(`Gripper #${activeGripper} → CLOSE`, 'ok', 'move');
   renderAll();
 }
 
 function sendSnap() {
   sendCmd({type:'snapshot'});
-  document.getElementById('snapStatus').textContent = 'SNAP: sent…';
-  document.getElementById('snapStatus').style.color = 'var(--warn)';
-  if (!aiOpen) toggleAI();
   addLog('Snapshot requested', 'warn', 'detect');
 }
 
 function handleSnapAck(msg) {
   if (msg.image_b64) {
-    const img = document.getElementById('camFeed');
-    img.src = 'data:image/jpeg;base64,' + msg.image_b64; img.style.display='block';
-    document.getElementById('camPlaceholder').style.display = 'none';
-    const det = document.getElementById('detBadge');
-    det.style.display='block'; det.textContent=(msg.detections??0)+' detection(s)';
-    document.getElementById('snapStatus').textContent = `SNAP: ${msg.detections??0} det`;
-    document.getElementById('snapStatus').style.color = 'var(--ok)';
-    if (!aiOpen) toggleAI();
     addLog(`Snapshot: ${msg.detections??0} detection(s)`, 'ok', 'detect');
   }
-}
-
-
-// ═══════════════════════════════════════
-//  AI PANEL
-// ═══════════════════════════════════════
-let aiOpen = false;
-function toggleAI() {
-  aiOpen = !aiOpen;
-  document.getElementById('ai-panel').classList.toggle('open', aiOpen);
-  const btn = document.getElementById('ai-trigger-btn');
-  btn.textContent     = aiOpen ? '✕ CLOSE' : 'AI';
-  btn.style.borderColor = aiOpen ? 'var(--danger)' : '';
-  btn.style.color       = aiOpen ? 'var(--danger)' : '';
-  // เชื่อม CAM 3 อัตโนมัติเมื่อเปิด AI panel
-  if (aiOpen) connectCam3();
-}
-
-function connectCam3() {
-  const url = document.getElementById('cam3Url')?.value?.trim();
-  if (!url) return;
-  const img = document.getElementById('cam3Feed');
-  if (!img) return;
-  img.src = url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
-  img.style.display = 'block';
-  document.getElementById('cam3Placeholder').style.display = 'none';
-  addLog('CAM 3 → ' + url, 'ok', 'detect');
 }
 
 
@@ -793,19 +786,38 @@ function toggleQR() {
   btn.style.borderColor = qrOpen ? 'var(--ok)' : '';
   btn.style.color       = qrOpen ? 'var(--ok)' : '';
 
-  if (qrOpen && aiOpen) toggleAI();
-
   if (qrOpen) {
     const base = getFlaskBase();   // → http://127.0.0.1:5000
     frame.src           = base;
     frame.style.display = 'block';
     if (ph) ph.style.display = 'none';
-    addLog('QR Panel → ' + base, 'ok', 'detect');
+    addLog('AI Panel → ' + base, 'ok', 'detect');
+    // พัก iframe หนักข้างเคียง (3D + LIDAR) ขณะเปิด AI เพื่อคืน budget ให้วิดีโอ
+    setHeavyIframesPaused(true);
   } else {
-    frame.src           = '';
+    frame.src           = '';   // ตัดการเชื่อมต่อ MJPEG ทันทีเมื่อปิด
     frame.style.display = 'none';
     if (ph) ph.style.display = 'flex';
+    setHeavyIframesPaused(false);
   }
+}
+
+// พัก/คืน iframe 3D + LIDAR โดย unload src (about:blank) เพื่อหยุด render loop
+// ของมันชั่วคราว — คืน main-thread/GPU budget ให้สตรีมวิดีโอ AI ตอนเปิด panel
+const _heavyIframes = [
+  { sel: '#mini-3d-wrap iframe',  src: '3d_simulation.html' },
+  { sel: '#lidarFrame',           src: 'lidar.html' },
+];
+function setHeavyIframesPaused(paused) {
+  _heavyIframes.forEach(it => {
+    const f = document.querySelector(it.sel);
+    if (!f) return;
+    if (paused) {
+      f.src = 'about:blank';
+    } else if ((f.getAttribute('src') || '') === 'about:blank') {
+      f.src = it.src;   // โหลดกลับเฉพาะตอนที่ถูกพักไว้
+    }
+  });
 }
 
 async function doQRScan() {
@@ -1014,7 +1026,7 @@ function updateCardinalMovement() {
   renderAll();
 }
 const ACTION_TO_POSTURE = { posture_home:'home', posture_horizontal:'horizontal', posture_guard:'guard', posture_giraff:'giraff', posture_stair:'stair', posture_custom_1:'custom_1', posture_custom_2:'custom_2', posture_custom_3:'custom_3', posture_custom_4:'custom_4' };
-const ACTION_TO_SERVO   = { servo_0:0, servo_1:1, servo_2:2, servo_3:3, servo_4:4, servo_5:5, servo_6:6, servo_7:7 };
+const ACTION_TO_SERVO = { servo_0:0, servo_1:1, servo_2:2, servo_3:3, servo_4:4, servo_5:5, servo_6:6, servo_7:7, servo_8:8 };
 
 function handleKeyDown(e) {
   if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
@@ -1260,7 +1272,7 @@ const KB_DEFAULTS = {
   move_forward:'w', move_back:'s', move_left:'a', move_right:'d',
   move_diag_fl:'q', move_diag_fr:'e', move_diag_bl:'z', move_diag_br:'c', brake:'x',
   servo_0:'y', servo_1:'u', servo_2:'i', servo_3:'o',
-  servo_4:'h', servo_5:'j', servo_6:'k', servo_7:'l',
+  servo_4:'h', servo_5:'j', servo_6:'n', servo_7:'k', servo_8:'l',
   motor_grip:'.', motor_reverse:',', motor_stop:' ',
   posture_home:'F1', posture_horizontal:'F2', posture_guard:'F3', posture_giraff:'F4', posture_stair:'F5',
   posture_custom_1:'F6', posture_custom_2:'F7', posture_custom_3:'F8', posture_custom_4:'F9',
@@ -1276,7 +1288,8 @@ const KB_LABELS = {
   servo_0:{label:'J1 Shoulder',cat:'servo'}, servo_1:{label:'J2 Elbow',cat:'servo'},
   servo_2:{label:'J3 Extend',cat:'servo'},   servo_3:{label:'J4 Wrist',cat:'servo'},
   servo_4:{label:'J5 Tool',cat:'servo'},     servo_5:{label:'J6 Gripper',cat:'servo'},
-  servo_6:{label:'Flip-F',cat:'servo'},      servo_7:{label:'Flip-R',cat:'servo'},
+  servo_6:{label:'Gripper2',cat:'servo'},    servo_7:{label:'Flip-F',cat:'servo'},
+  servo_8:{label:'Flip-R',cat:'servo'},
   motor_grip:{label:'Motor Grip',cat:'servo'}, motor_reverse:{label:'Motor Reverse',cat:'servo'}, motor_stop:{label:'Motor Stop',cat:'servo'},
   posture_home:{label:'Posture: Home',cat:'posture'}, posture_horizontal:{label:'Posture: HomeIK',cat:'posture'},
   posture_guard:{label:'Posture: Guard',cat:'posture'}, posture_giraff:{label:'GIRAFF',cat:'posture'}, posture_stair:{label:'STAIR',cat:'posture'},
@@ -1369,12 +1382,12 @@ const CUSTOM_POSTURE_DEFAULTS = {
 // เก็บ angles ของแต่ละ custom posture [J1,J2,J3,J4,J5,J6,Flip-F,Flip-R]
 // giraff/stair มีค่า default จาก rescue_win.py
 let customPostureAngles = {
-  giraff:   [60, 130,  0,  90, 90, 70,  57,  80],  // F4 default
-  stair:    [60, 130,  0,  90, 90, 70, 160,  45],  // F5 default
-  custom_1: [60, 130,  0,  90, 90, 70, 100, 100],  // F6 default = HOME
-  custom_2: [106, 103, 0, 69, 90, 70, 140, 45],  // F7 QR SCAN + Flipper down
-  custom_3: [60, 130,  0,  90, 90, 70, 100, 100],  // F8 default = HOME
-  custom_4: [60, 130,  0,  90, 90, 70, 100, 100],  // F9 default = HOME
+  giraff:   [98, 150, 157,  100, 100, 70, 90,  27,  38],  // F4 default
+  stair:    [50,130, 90, 120, 100, 70, 90, 135, 105],  // F5 default
+  kRail:    [98, 150, 157, 100, 100, 70, 90, 78, 154],   //F6 ด่าน K-Rails
+  custom_2: [106, 103, 0, 69, 90, 70, 90, 140, 45],
+  custom_3: [60, 130,  0,  90, 90, 70, 90, 100, 100],
+  custom_4: [60, 130,  0,  90, 90, 70, 90, 100, 100],
 };
 
 let postureNames = { ...CUSTOM_POSTURE_DEFAULTS };
@@ -1768,8 +1781,34 @@ function fitUIRoot() { /* responsive ผ่าน CSS แล้ว — ไม่
 // ═══════════════════════════════════════
 //  IMU WIDGET (Arm/Gripper panel) — data via rescue.py WebSocket {type:'imu',...}
 // ═══════════════════════════════════════
-const imuState = { roll: 0, pitch: 0, yaw: 0, live: false };
+const imuState = { roll: 0, pitch: 0, yaw: 0, yawRaw: 0, live: false };
 let _imuStaleTimer = null;
+// yaw-zero offset (เหมือน heading_zero ใน test.py): กด SET HEAD → จำ yaw ดิบปัจจุบัน
+// แล้ว yaw ที่แสดง/ส่งให้โมเดล = normalize(yawRaw - yawZero). เก็บใน localStorage ข้ามรอบ
+let imuYawZero = (() => { const s = parseFloat(localStorage.getItem('rescuebot_imu_yawzero')); return isNaN(s) ? 0 : s; })();
+const _normDeg = a => { a = ((a + 180) % 360 + 360) % 360 - 180; return a; };
+
+// ส่ง orientation เข้า iframe 3D ให้โมเดลเอียงตาม IMU (postMessage เดียวกับ drive/angles)
+function _post3D_imu(roll, pitch, yaw) {
+  const iframe = document.querySelector('#mini-3d-wrap iframe');
+  if (iframe?.contentWindow)
+    iframe.contentWindow.postMessage({ type: 'imu', roll, pitch, yaw }, '*');
+}
+
+function imuSetHead() {
+  imuYawZero = imuState.yawRaw;
+  try { localStorage.setItem('rescuebot_imu_yawzero', String(imuYawZero)); } catch (e) {}
+  document.getElementById('btnImuSetHead')?.classList.add('head-set');
+  addImuLog(`SET HEAD → yaw0 = ${imuYawZero.toFixed(1)}°`, 'warn');
+  updateIMU({});   // refresh ค่าที่แสดง/โมเดลทันที โดยไม่ต้องรอเฟรมถัดไป
+}
+function imuResetHead() {
+  imuYawZero = 0;
+  try { localStorage.removeItem('rescuebot_imu_yawzero'); } catch (e) {}
+  document.getElementById('btnImuSetHead')?.classList.remove('head-set');
+  addImuLog('RESET HEAD → ใช้ yaw ดิบ', 'warn');
+  updateIMU({});
+}
 // throttle IMU → log: log อย่างน้อยทุก 1s หรือเมื่อค่าเปลี่ยน > 2° (กันสแปม 20Hz)
 let _imuLogLast = { t: 0, roll: null, pitch: null, yaw: null };
 const _IMU_LOG_MS = 1000, _IMU_LOG_DEG = 2;
@@ -1788,9 +1827,15 @@ function _logIMU() {
 }
 
 function updateIMU(msg) {
-  if (typeof msg.roll  === 'number') imuState.roll  = msg.roll;
-  if (typeof msg.pitch === 'number') imuState.pitch = msg.pitch;
-  if (typeof msg.yaw   === 'number') imuState.yaw   = msg.yaw;
+  const fresh = (typeof msg.roll === 'number' || typeof msg.pitch === 'number' || typeof msg.yaw === 'number');
+  if (typeof msg.roll  === 'number') imuState.roll   = msg.roll;
+  if (typeof msg.pitch === 'number') imuState.pitch  = msg.pitch;
+  if (typeof msg.yaw   === 'number') imuState.yawRaw = msg.yaw;
+  // yaw ที่แสดง = ค่าดิบหักออฟเซ็ตหัว (SET HEAD) แล้ว normalize เป็น [-180,180]
+  imuState.yaw = _normDeg(imuState.yawRaw - imuYawZero);
+
+  // ส่งมุมให้โมเดล 3D เอียงตาม (ใช้ yaw ที่หักหัวแล้ว เพื่อให้ตรงกับ widget)
+  _post3D_imu(imuState.roll, imuState.pitch, imuState.yaw);
 
   const fmt = v => (v >= 0 ? '+' : '') + v.toFixed(1);
   const rEl = document.getElementById('imuRoll');
@@ -1800,18 +1845,21 @@ function updateIMU(msg) {
   if (pEl) pEl.textContent = fmt(imuState.pitch);
   if (yEl) yEl.textContent = fmt(imuState.yaw);
 
-  const st = document.getElementById('imuStatus');
-  if (st) { st.textContent = 'LIVE'; st.className = 'imu-live'; }
-  imuState.live = true;
-  clearTimeout(_imuStaleTimer);
-  _imuStaleTimer = setTimeout(() => {
-    imuState.live = false;
-    const s = document.getElementById('imuStatus');
-    if (s) { s.textContent = 'NO DATA'; s.className = 'imu-stale'; }
-  }, 1500);
+  // มาร์ค LIVE + log เฉพาะตอนมีข้อมูลใหม่จริง (ไม่ใช่ตอนกด SET/RESET HEAD)
+  if (fresh) {
+    const st = document.getElementById('imuStatus');
+    if (st) { st.textContent = 'LIVE'; st.className = 'imu-live'; }
+    imuState.live = true;
+    clearTimeout(_imuStaleTimer);
+    _imuStaleTimer = setTimeout(() => {
+      imuState.live = false;
+      const s = document.getElementById('imuStatus');
+      if (s) { s.textContent = 'NO DATA'; s.className = 'imu-stale'; }
+    }, 1500);
+  }
 
   drawIMUAH();
-  _logIMU();
+  if (fresh) _logIMU();
 }
 
 function drawIMUAH() {

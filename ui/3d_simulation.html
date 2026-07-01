@@ -273,7 +273,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 //           'mount' → pivots under the adjustable arm-mount group
 //           '<key>' → pivots under that mover (kinematic chain)
 //   dir   : rotation direction (+1 / -1); flippers mirror each other.
-const STL_DIR = '../models/';   // STL meshes live in repo-root models/ (served at /models/, this file at /ui/)
+const STL_DIR = 'models/';   // STL meshes live in ui/models/ (same dir as this file)
 const BASE = { url: 'RESQBASE_BASE.stl', color: 0x87CEEB };
 
 const MOVERS = [
@@ -323,9 +323,15 @@ camera.position.set(700, 500, 700);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; controls.dampingFactor = 0.06;
 controls.minDistance = 30; controls.maxDistance = 12000;
+// ล็อกซูม: หมุนกล้องดูได้ แต่ขยายเข้า/ออกไม่ได้ (กรอบโมเดลคงที่ ชัดเสมอ)
+controls.enableZoom = false;
 
 // ── State ────────────────────────────────────────────────────────────────────
-const rootGroup = new THREE.Group(); scene.add(rootGroup);
+// tiltGroup = ตัวเอียงทั้งหุ่นตาม IMU (roll/pitch/yaw). rootGroup อยู่ข้างใน →
+// การ "นั่งบนพื้น" (rootGroup.position.y) และ fitCamera ยังทำงานเหมือนเดิม,
+// ส่วน GridHelper ผูกกับ scene ตรงๆ จึงอยู่นิ่งขณะหุ่นเอียง
+const tiltGroup = new THREE.Group(); scene.add(tiltGroup);
+const rootGroup = new THREE.Group(); tiltGroup.add(rootGroup);
 const armMount  = new THREE.Group(); rootGroup.add(armMount);
 let baseMesh = null;
 
@@ -449,9 +455,13 @@ function tryAssemble() {
     applyMount();
     rebuildChain();
 
-    // Sit on the grid
+    // Sit on the grid + จัดให้ศูนย์กลางหุ่นอยู่ที่ origin แนวราบ เพื่อให้ tiltGroup
+    // หมุน/เอียงรอบกลางตัวหุ่น (yaw หมุนอยู่กับที่, ไม่เหวี่ยง)
     const bb = new THREE.Box3().setFromObject(rootGroup);
+    const bc = bb.getCenter(new THREE.Vector3());
     rootGroup.position.y = -bb.min.y;
+    rootGroup.position.x = -bc.x;
+    rootGroup.position.z = -bc.z;
 
     fitCamera();
     syncPivotUI();
@@ -523,7 +533,8 @@ function fitCamera() {
     const sph = new THREE.Sphere();
     new THREE.Box3().setFromObject(rootGroup).getBoundingSphere(sph);
     const r = sph.radius || 300;
-    camera.position.set(sph.center.x + r*2.0, sph.center.y + r*1.3, sph.center.z + r*2.0);
+    // เข้าใกล้กว่าเดิม (โมเดลใหญ่/ชัดขึ้น) — ซูมล็อกอยู่แล้ว ระยะนี้จึงคงที่
+    camera.position.set(sph.center.x + r*1.25, sph.center.y + r*0.85, sph.center.z + r*1.25);
     controls.target.copy(sph.center); controls.update();
 }
 
@@ -604,9 +615,9 @@ window.toggleWS = () => {
 //   idx     : position in the angles[] array coming from control.html
 //   neutral : servo angle treated as this mover's 0° (rest pose) — subtracted
 //   invert  : set true if a joint turns the WRONG way in the sim
-// Servo order in control.html:
-//   0 J1 Shoulder · 1 J2 Elbow · 2 J3 Extend · 3 J4 Wrist
-//   4 J5 Tool · 5 J6 Gripper · 6 Flip-F · 7 Flip-R   (4,5 have no 3D mover)
+// Servo order in control.html (9 channels — Gripper2 added at idx 6):
+//   0 Joint1 · 1 Joint2 · 2 Joint3 · 3 Joint4 · 4 Joint5
+//   5 Gripper · 6 Gripper2 · 7 Flip-F · 8 Flip-R   (4,5,6 have no 3D mover)
 // >>> If a joint moves backwards, flip its `invert`. If its rest pose looks
 //     off-centre, adjust its `neutral`. Tune only this table. <<<
 const CONSOLE_MAP = {
@@ -614,12 +625,39 @@ const CONSOLE_MAP = {
     j2:    { idx: 1, neutral: 170, invert: true  },
     j3:    { idx: 2, neutral: 157, invert: false },
     j4:    { idx: 3, neutral: 90,  invert: false },
-    front: { idx: 6, neutral: 90,  invert: false },
-    back:  { idx: 7, neutral: 90,  invert: false },
+    front: { idx: 7, neutral: 90,  invert: false },
+    back:  { idx: 8, neutral: 90,  invert: false },
 };
+
+// ── IMU tilt (เอียงทั้งหุ่นตามค่าจริงจาก BNO055 ผ่าน rescue.py {type:'imu',...}) ──
+// จูน 2 ชุดให้ตรงกับการติดตั้งบอร์ดจริง:
+//   IMU_TILT  : sign ของแต่ละแกน — ถ้าเอียง "กลับทิศ" (เอียงซ้ายแต่โมเดลไปขวา) สลับเป็น -1
+//   IMU_MOUNT : ออฟเซ็ตคงที่ (°) ชดเชยการวางบอร์ด — ถ้าโมเดล "กลับหัว" (คว่ำ) ใส่ roll:180
+//               (บอร์ดติดคว่ำ → roll/pitch อ่านพลิก 180°). ถ้าหงายแล้วแต่หันผิด ลองย้าย 180
+//               ไป pitch แทน, หรือสลับ sign ใน IMU_TILT
+const IMU_TILT  = { roll: 1, pitch: 1, yaw: 1 };
+const IMU_MOUNT = { roll: 180, pitch: 0, yaw: 0 };   // ← บอร์ดติดคว่ำ: หงายโมเดลกลับ
+// IMU_SMOOTH = ความหนืดของการ slerp ต่อเฟรม (0..1): ต่ำ = นุ่ม/หน่วงกว่า, สูง = ไวกว่า
+const IMU_SMOOTH = 0.15;
+let _imuActive = false;
+const _imuTargetQuat = new THREE.Quaternion();
+const _imuEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+function applyImu(o) {
+    const r = THREE.MathUtils.degToRad((o.roll  || 0) * IMU_TILT.roll  + IMU_MOUNT.roll);
+    const p = THREE.MathUtils.degToRad((o.pitch || 0) * IMU_TILT.pitch + IMU_MOUNT.pitch);
+    const y = THREE.MathUtils.degToRad((o.yaw   || 0) * IMU_TILT.yaw   + IMU_MOUNT.yaw);
+    // order YXZ: yaw(Y) → pitch(X) → roll(Z). set(x,y,z) = (pitch, yaw, roll)
+    // เก็บเป็น "เป้าหมาย" quaternion แล้วค่อย slerp เข้าหาในลูป animate (ลื่น + ข้าม
+    // ปัญห wrap-around ของ yaw 359°→0° ได้เอง)
+    _imuEuler.set(p, y, r);
+    _imuTargetQuat.setFromEuler(_imuEuler);
+    _imuActive = true;
+}
 
 function applyCommand(cmd) {
     if (typeof cmd !== 'object' || !cmd) return;
+    // IMU orientation → เอียงทั้งหุ่น
+    if (cmd.type === 'imu' || cmd.imu) applyImu(cmd.imu || cmd);
     // drive state (มาพร้อม state) → ขับ animation แถบตีนตะขาบ
     if (cmd.drive) applyDrive(cmd.drive);
     // (a) control-console format: { type:'state', angles:[...] }
@@ -704,6 +742,8 @@ function resize() { const w = viewport.clientWidth, h = viewport.clientHeight; r
 window.addEventListener('resize', resize); resize();
 (function animate() {
     requestAnimationFrame(animate);
+    // slerp เอียงหุ่นเข้าหาเป้าหมาย IMU แบบนุ่มนวลทุกเฟรม
+    if (_imuActive) tiltGroup.quaternion.slerp(_imuTargetQuat, IMU_SMOOTH);
     // เลื่อนลายตีนตะขาบตามทิศ/ความเร็วของแต่ละข้าง
     const [sl, sr] = trackSpeeds();
     if (sl || sr) {

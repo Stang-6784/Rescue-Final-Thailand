@@ -38,6 +38,8 @@ from rclpy.node import Node
 from rclpy.qos import (QoSProfile, QoSDurabilityPolicy,
                        QoSReliabilityPolicy, QoSHistoryPolicy)
 from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import String
+from visualization_msgs.msg import Marker, MarkerArray
 from tf2_ros import Buffer, TransformListener
 
 import websockets
@@ -52,6 +54,17 @@ SAVE_DIR = os.path.expanduser("~/saved_maps")   # ที่เก็บชั่
 OCC_THRESH  = 65
 FREE_THRESH = 25
 
+# topic ที่ publish จุด mark (hazmat/QR) เป็น ROS2 marker ให้ lidar/RViz วาดบนแผนที่
+MARKS_TOPIC = "/scan_marks"
+# topic ที่ node อื่น (tcp_bridge) สั่งปักหมุดเข้ามาได้ — payload = JSON {"kind","text"}
+MARK_REQ_TOPIC = "/mark/request"
+
+# สีของหมุดตาม kind  (r, g, b) ช่วง 0..1
+MARK_COLORS = {
+    "qr": (0.10, 1.00, 0.30),    # เขียว
+    "ai": (1.00, 0.55, 0.00),    # ส้ม = hazmat
+}
+
 
 # ═══════════════════════════════════════════════════════════════
 #  ROS2 worker node
@@ -62,6 +75,12 @@ class MarkerNode(Node):
         self.latest_map = None
         self.marks = []
         self._mark_id = 0
+        self._lock = threading.Lock()   # กัน marks ถูกแก้ระหว่าง iterate (WS thread vs ROS thread)
+
+        # ระยะเลื่อนหมุดไปข้างหน้าหุ่น (ตาม yaw) ให้ตกใกล้ตำแหน่งวัตถุจริง
+        # 0.0 = ปักตรงตำแหน่งหุ่นเป๊ะ (พฤติกรรมเดิม)
+        self.declare_parameter("mark_fwd_offset", 0.30)
+        self.fwd_offset = float(self.get_parameter("mark_fwd_offset").value)
 
         # /map ของ Cartographer = latched (RELIABLE + TRANSIENT_LOCAL)
         qos = QoSProfile(
@@ -72,9 +91,35 @@ class MarkerNode(Node):
         )
         self.create_subscription(OccupancyGrid, "/map", self._on_map, qos)
 
+        # ── publish จุด mark เป็น ROS2 MarkerArray (latched) ──
+        # latched (TRANSIENT_LOCAL) เพื่อให้ subscriber ที่ต่อทีหลัง (lidar.html/RViz)
+        # ได้หมุดล่าสุดทันที + มี timer republish ซ้ำ กัน rosbridge ที่ไม่ขอ transient
+        marks_qos = QoSProfile(
+            depth=1,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.pub_marks = self.create_publisher(MarkerArray, MARKS_TOPIC, marks_qos)
+        self.create_timer(1.0, self.publish_markers)   # republish ให้ client ที่เพิ่งต่อ
+
+        # ── รับคำสั่งปักหมุดจาก node อื่น (tcp_bridge) ผ่าน ROS topic ──
+        self.create_subscription(String, MARK_REQ_TOPIC, self._on_mark_req, 10)
+
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.get_logger().info(f"map_marker_pi → WebSocket {HOST}:{PORT}")
+        self.get_logger().info(
+            f"map_marker_pi → WS {HOST}:{PORT} | marks→{MARKS_TOPIC} "
+            f"| req←{MARK_REQ_TOPIC} | fwd_offset={self.fwd_offset:.2f}m")
+
+    # ── รับ {"kind","text"} จาก /mark/request (tcp_bridge republish จาก Windows) ──
+    def _on_mark_req(self, msg: String):
+        try:
+            obj = json.loads(msg.data)
+        except Exception:
+            return
+        self.add_mark(obj.get("kind", "qr"), obj.get("text", ""))
+        self.publish_markers()
 
     def _on_map(self, msg: OccupancyGrid):
         self.latest_map = msg
@@ -92,29 +137,85 @@ class MarkerNode(Node):
                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         return (t.transform.translation.x, t.transform.translation.y, yaw)
 
-    # ── ปัก mark ที่ตำแหน่งหุ่นปัจจุบัน ──
+    # ── ปัก mark ที่ตำแหน่งหุ่นปัจจุบัน (เลื่อนไปข้างหน้าตาม fwd_offset) ──
     def add_mark(self, kind, text):
+        kind = "ai" if str(kind).lower() in ("ai", "hazmat") else "qr"
         pose = self.get_pose()
         if pose is None:
             x = y = yaw = None
             pose_ok = False
         else:
-            x, y, yaw = pose
+            rx, ry, yaw = pose
+            # เลื่อนหมุดไปข้างหน้าหุ่นตามทิศหัน ให้ตกใกล้ตำแหน่งวัตถุจริง
+            x = rx + self.fwd_offset * math.cos(yaw)
+            y = ry + self.fwd_offset * math.sin(yaw)
             pose_ok = True
-        self._mark_id += 1
-        mark = {
-            "id": self._mark_id,
-            "kind": kind,                 # 'qr' | 'ai'
-            "text": text or "",
-            "x": x, "y": y, "yaw": yaw,   # เมตร ในเฟรม map
-            "pose_ok": pose_ok,
-            "t": datetime.datetime.now().isoformat(timespec="seconds"),
-        }
-        self.marks.append(mark)
+        with self._lock:
+            self._mark_id += 1
+            mark = {
+                "id": self._mark_id,
+                "kind": kind,                 # 'qr' | 'ai'
+                "text": text or "",
+                "x": x, "y": y, "yaw": yaw,   # เมตร ในเฟรม map
+                "pose_ok": pose_ok,
+                "t": datetime.datetime.now().isoformat(timespec="seconds"),
+            }
+            self.marks.append(mark)
         self.get_logger().info(
             f"mark +{kind} #{mark['id']} '{text}' "
             f"pose={'(%.2f,%.2f)' % (x, y) if pose_ok else 'unknown'}")
         return mark
+
+    # ── สร้าง+publish MarkerArray จาก marks ปัจจุบัน (เรียกได้จากหลาย thread) ──
+    def publish_markers(self):
+        arr = MarkerArray()
+        # ลบของเก่าทั้งหมดก่อน แล้วค่อยใส่ชุดปัจจุบัน (snapshot เต็มทุกครั้ง)
+        clear = Marker()
+        clear.header.frame_id = MAP_FRAME
+        clear.action = Marker.DELETEALL
+        arr.markers.append(clear)
+
+        now = self.get_clock().now().to_msg()
+        with self._lock:
+            marks = [m for m in self.marks if m.get("pose_ok")]
+        mid = 0
+        for mk in marks:
+            r, g, b = MARK_COLORS.get(mk.get("kind", "qr"), (1.0, 1.0, 1.0))
+            x = float(mk["x"]); y = float(mk["y"])
+
+            dot = Marker()
+            dot.header.frame_id = MAP_FRAME
+            dot.header.stamp = now
+            dot.ns = "scan_marks"
+            dot.id = mid; mid += 1
+            dot.type = Marker.CYLINDER
+            dot.action = Marker.ADD
+            dot.pose.position.x = x
+            dot.pose.position.y = y
+            dot.pose.position.z = 0.10
+            dot.pose.orientation.w = 1.0
+            dot.scale.x = 0.25; dot.scale.y = 0.25; dot.scale.z = 0.20
+            dot.color.r = r; dot.color.g = g; dot.color.b = b; dot.color.a = 0.95
+            arr.markers.append(dot)
+
+            txt = Marker()
+            txt.header.frame_id = MAP_FRAME
+            txt.header.stamp = now
+            txt.ns = "scan_marks_text"
+            txt.id = mid; mid += 1
+            txt.type = Marker.TEXT_VIEW_FACING
+            txt.action = Marker.ADD
+            txt.pose.position.x = x
+            txt.pose.position.y = y
+            txt.pose.position.z = 0.45
+            txt.pose.orientation.w = 1.0
+            txt.scale.z = 0.30
+            txt.color.r = r; txt.color.g = g; txt.color.b = b; txt.color.a = 1.0
+            prefix = "QR: " if mk.get("kind") == "qr" else "HZ: "
+            txt.text = prefix + (mk.get("text", "") or "")
+            arr.markers.append(txt)
+
+        self.pub_marks.publish(arr)
 
     # ── เขียน .pgm/.yaml/_marks.json บน Pi → คืน path list ──
     def save_files(self):
@@ -207,10 +308,13 @@ class WsHub:
 
                 if t == "mark":
                     self.node.add_mark(msg.get("kind", "qr"), msg.get("text", ""))
+                    self.node.publish_markers()        # → ROS2 /scan_marks
                     await self.push_marks()
 
                 elif t == "clear_marks":
-                    self.node.marks.clear()
+                    with self.node._lock:
+                        self.node.marks.clear()
+                    self.node.publish_markers()        # → ROS2 /scan_marks (DELETEALL)
                     await self.push_marks()
 
                 elif t == "get":

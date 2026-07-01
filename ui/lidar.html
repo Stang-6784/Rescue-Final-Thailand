@@ -53,14 +53,22 @@
 "use strict";
 // ── ปรับชื่อ topic / service ให้ตรงกับฝั่ง Pi ได้ที่นี่ ──────────────────────
 const CONFIG = {
-  scanTopic:  '/scan',          scanType: 'sensor_msgs/LaserScan',
-  mapTopic:   '/map',           mapType:  'nav_msgs/OccupancyGrid',
-  scanThrottleMs: 100,          // จำกัดอัตรา /scan กันท่วม
-  // บริการ SLAM — ปุ่ม SAVE/RESET จะเรียกตามนี้ (best-effort; แก้ชื่อตามสแต็กจริง)
-  saveService:  '/slam_toolbox/save_map', saveType: 'slam_toolbox/srv/SaveMap',
-  startService: '/slam/start',            startType: 'std_srvs/srv/Empty',
-  stopService:  '/slam/stop',             stopType:  'std_srvs/srv/Empty',
-  staleMs: 3000,                // ไม่มีข้อมูลใหม่เกินช่วงนี้ = NO DATA
+  scanTopic:  '/MS200/scan',
+  scanType: 'sensor_msgs/LaserScan',
+  mapTopic:   '/map',
+  mapType:  'nav_msgs/OccupancyGrid',
+  markTopic:  '/scan_marks',                        // hazmat/QR pins จาก map_marker_pi
+  markType: 'visualization_msgs/MarkerArray',
+  scanThrottleMs: 100,
+  displayMode: 'map',   // 'scan' | 'map' | 'both'
+
+  saveService:  '/slam/save_map',
+  saveType: 'std_srvs/srv/Trigger',
+  startService: '/slam/start',
+  startType: 'std_srvs/srv/Empty',
+  stopService:  '/slam/stop',
+  stopType:  'std_srvs/srv/Empty',
+  staleMs: 3000,
 };
 
 // ── สถานะ ──────────────────────────────────────────────────────────────────
@@ -70,7 +78,7 @@ const hud = document.getElementById('hud');
 const waitEl = document.getElementById('waiting');
 
 let ws = null, wsAddr = null, retryT = null;
-let lastScan = null, lastMap = null;
+let lastScan = null, lastMap = null, lastMarks = [];
 let receiving = false, staleT = null;
 const pendingSrv = new Map();   // id → {cmd, resolve}
 
@@ -104,12 +112,15 @@ function connect(addr) {
            throttle_rate: CONFIG.scanThrottleMs, queue_length: 1 });
     send({ op: 'subscribe', topic: CONFIG.mapTopic, type: CONFIG.mapType,
            queue_length: 1 });
+    send({ op: 'subscribe', topic: CONFIG.markTopic, type: CONFIG.markType,
+           queue_length: 1 });
   };
   ws.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
     if (m.op === 'publish') {
       if (m.topic === CONFIG.scanTopic) { lastScan = m.msg; setReceiving(true); }
       else if (m.topic === CONFIG.mapTopic) { lastMap = m.msg; setReceiving(true); }
+      else if (m.topic === CONFIG.markTopic) { ingestMarks(m.msg); }
     } else if (m.op === 'service_response') {
       const p = pendingSrv.get(m.id);
       if (p) { pendingSrv.delete(m.id);
@@ -142,13 +153,60 @@ function callService(service, type, args, cmd) {
 window.addEventListener('message', (e) => {
   const d = e.data; if (!d || typeof d !== 'object') return;
   switch (d.type) {
-    case 'setWs':   if (d.addr) connect(d.addr); break;
-    case 'mapSave': callService(CONFIG.saveService, CONFIG.saveType,
-                      { name: { data: 'map' } }, 'save'); break;
+    case 'setWs':     if (d.addr) connect(d.addr); break;
+    case 'setMode':   CONFIG.displayMode = d.mode; break;   // ← เพิ่ม
+    case 'mapSave':   callService(CONFIG.saveService, CONFIG.saveType, {}, 'save'); break;
     case 'slamStop':  callService(CONFIG.stopService, CONFIG.stopType, {}, 'stop'); break;
     case 'slamStart': callService(CONFIG.startService, CONFIG.startType, {}, 'start'); break;
   }
 });
+
+// ── hazmat/QR marks (MarkerArray จาก map_marker_pi) ─────────────────────────
+// แต่ละ publish = snapshot เต็ม (DELETEALL + ชุดปัจจุบัน) → แทนที่ lastMarks ทั้งก้อน
+function ingestMarks(msg) {
+  const out = [];
+  for (const mk of (msg.markers || [])) {
+    if (mk.action === 3) continue;                 // DELETEALL → เริ่มชุดใหม่
+    const p = mk.pose && mk.pose.position;
+    if (!p) continue;
+    const c = mk.color || { r: 1, g: 1, b: 1 };
+    out.push({
+      x: p.x, y: p.y,
+      r: c.r, g: c.g, b: c.b,
+      text: mk.text || '',
+      isText: mk.type === 9,                        // 9 = TEXT_VIEW_FACING
+    });
+  }
+  lastMarks = out;
+}
+
+// วาดหมุดบน map: แปลงพิกัด map (เมตร) → pixel ด้วย transform เดียวกับที่วาด map
+function drawMarks(m, ox, oy, dh, pxPerCell) {
+  if (!lastMarks.length || !m) return;
+  const res = m.info.resolution || 0.05;
+  const origX = (m.info.origin && m.info.origin.position.x) || 0;
+  const origY = (m.info.origin && m.info.origin.position.y) || 0;
+  for (const mk of lastMarks) {
+    const col = (mk.x - origX) / res;
+    const row = (mk.y - origY) / res;
+    const px = ox + col * pxPerCell;
+    const py = oy + dh - row * pxPerCell;           // พลิก Y (ROS Y↑ / canvas Y↓)
+    const color = 'rgb(' + Math.round(mk.r*255) + ',' + Math.round(mk.g*255) + ',' + Math.round(mk.b*255) + ')';
+    if (mk.isText) {
+      ctx.font = '11px Consolas';
+      ctx.fillStyle = color;
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.lineWidth = 3;
+      ctx.strokeText(mk.text, px + 7, py - 6);
+      ctx.fillText(mk.text, px + 7, py - 6);
+    } else {
+      const rad = Math.max(4, (0.13 / res) * pxPerCell);
+      ctx.beginPath(); ctx.arc(px, py, rad, 0, Math.PI*2);
+      ctx.fillStyle = color; ctx.globalAlpha = 0.9; ctx.fill(); ctx.globalAlpha = 1;
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+  }
+}
 
 // ── วาดภาพ ──────────────────────────────────────────────────────────────────
 const mapCanvas = document.createElement('canvas');   // offscreen map ความละเอียดจริง
@@ -210,31 +268,108 @@ function render() {
   ctx.fillRect(0, 0, W, H);
 
   ctx.save();
-  ctx.translate(view.panX, view.panY);   // เลื่อน (pan)
-  ctx.scale(view.zoom, view.zoom);        // ซูม (zoom)
+  ctx.translate(view.panX, view.panY);
+  ctx.scale(view.zoom, view.zoom);
 
-  if (lastMap) {
-    const w = lastMap.info.width, h = lastMap.info.height;
-    const s = Math.min(W / w, H / h);
-    const dw = w * s, dh = h * s, ox = (W - dw) / 2, oy = (H - dh) / 2;
-    drawMapTo(ctx, lastMap, ox, oy, dw, dh);
-    // มินิ scan มุมขวาล่าง
+  const mode = CONFIG.displayMode;
+
+  if (mode === 'scan') {
+    // ── SCAN ONLY: เรดาร์เต็มจอ ──────────────────────────────
     if (lastScan) {
-      const rad = Math.min(W, H) * 0.16;
-      drawScanPolar(W - rad - 8, H - rad - 8, rad, true);
+      drawScanPolar(W / 2, H / 2, Math.min(W, H) / 2 - 10, false);
+      const n = lastScan.ranges ? lastScan.ranges.length : 0;
+      hud.innerHTML = 'SCAN <b>' + n + '</b> pts · SCAN MODE';
     }
-    const res = lastMap.info.resolution || 0;
-    hud.innerHTML = 'MAP <b>' + w + '×' + h + '</b> · ' + (w * res).toFixed(1) + '×' + (h * res).toFixed(1) + ' m';
-  } else if (lastScan) {
-    drawScanPolar(W / 2, H / 2, Math.min(W, H) / 2 - 10, false);
-    const n = lastScan.ranges ? lastScan.ranges.length : 0;
-    hud.innerHTML = 'SCAN <b>' + n + '</b> pts · ยังไม่มี /map (SLAM?)';
+
+  } else if (mode === 'map') {
+    // ── MAP ONLY: แผนที่เต็มจอ ────────────────────────────────
+    if (lastMap) {
+      const w = lastMap.info.width, h = lastMap.info.height;
+      const s = Math.min(W / w, H / h);
+      const dw = w * s, dh = h * s, ox = (W - dw) / 2, oy = (H - dh) / 2;
+      drawMapTo(ctx, lastMap, ox, oy, dw, dh);
+      drawMarks(lastMap, ox, oy, dh, s);
+      const res = lastMap.info.resolution || 0;
+      hud.innerHTML = 'MAP <b>' + w + '×' + h + '</b> · ' + (w * res).toFixed(1) + '×' + (h * res).toFixed(1) + ' m';
+    } else if (lastScan) {
+      // ยังไม่มี map → fallback แสดง scan แทน
+      drawScanPolar(W / 2, H / 2, Math.min(W, H) / 2 - 10, false);
+      hud.innerHTML = 'SCAN only · ยังไม่มี /map';
+    }
+
+  } else if (mode === 'both') {
+    // ── MAP + SCAN OVERLAY: scan align พิกัดจริงบน map ──────
+    if (lastMap) {
+      const mw = lastMap.info.width, mh = lastMap.info.height;
+      const res = lastMap.info.resolution || 0.05;
+      const s = Math.min(W / mw, H / mh);          // pixel-per-cell
+      const dw = mw * s, dh = mh * s;
+      const ox = (W - dw) / 2, oy = (H - dh) / 2;
+
+      // วาด map
+      drawMapTo(ctx, lastMap, ox, oy, dw, dh);
+
+      // วาด scan overlay ถ้ามี
+      if (lastScan) {
+        // origin ของ map (มุมล่างซ้ายในพิกัด ROS → pixel)
+        const mapOriginX = lastMap.info.origin.position.x || 0;
+        const mapOriginY = lastMap.info.origin.position.y || 0;
+
+        // robot/sensor อยู่ที่ (0,0) ในพิกัด ROS
+        // แปลงเป็น pixel บน canvas
+        const robotPixX = ox + (-mapOriginX / res) * s;
+        const robotPixY = oy + dh - (-mapOriginY / res) * s;  // พลิก Y (ROS Y↑, canvas Y↓)
+
+        drawScanOnMap(robotPixX, robotPixY, s / res);
+      }
+
+      drawMarks(lastMap, ox, oy, dh, s);
+      hud.innerHTML = 'MAP+SCAN <b>' + mw + '×' + mh + '</b> · ' + (mw * res).toFixed(1) + '×' + (mh * res).toFixed(1) + ' m';
+
+    } else if (lastScan) {
+      // ยังไม่มี map → fallback scan เต็มจอ
+      drawScanPolar(W / 2, H / 2, Math.min(W, H) / 2 - 10, false);
+      hud.innerHTML = 'SCAN only · ยังไม่มี /map';
+    }
   }
 
   ctx.restore();
   requestAnimationFrame(render);
 }
 requestAnimationFrame(render);
+
+// วาด scan โดย scale ตาม map จริง (1 unit ROS = pxPerM pixel)
+function drawScanOnMap(cx, cy, pxPerM) {
+  const s = lastScan; if (!s || !s.ranges || !s.ranges.length) return;
+  const rmax = s.range_max && isFinite(s.range_max) ? s.range_max : 6;
+
+  // วงอ้างอิง
+  ctx.strokeStyle = 'rgba(0,212,255,0.2)';
+  ctx.lineWidth = 0.5;
+  for (let k = 1; k <= 3; k++) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, (rmax / 3 * k) * pxPerM, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // จุด scan (scale เป็น meter จริง)
+  ctx.fillStyle = 'rgba(0,255,136,0.85)';
+  const dot = Math.max(1, pxPerM * 0.04);
+  for (let i = 0; i < s.ranges.length; i++) {
+    const r = s.ranges[i];
+    if (!isFinite(r) || r <= 0 || r > rmax) continue;
+    const a = s.angle_min + i * s.angle_increment;
+    const x = cx + r * pxPerM * Math.cos(a);
+    const y = cy - r * pxPerM * Math.sin(a);   // พลิก Y
+    ctx.fillRect(x - dot, y - dot, dot * 2, dot * 2);
+  }
+
+  // จุดหุ่น
+  ctx.fillStyle = '#ff4444';
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(2, pxPerM * 0.08), 0, Math.PI * 2);
+  ctx.fill();
+}
 
 // ── zoom (scroll) + pan (ลากคลิกซ้าย) ───────────────────────────────────────
 cv.addEventListener('wheel', (e) => {

@@ -53,6 +53,17 @@
         #imu-rpy .imu-val.r { color: var(--danger); }
         #imu-rpy .imu-val.p { color: var(--accent); }
         #imu-rpy .imu-val.y { color: var(--ok); }
+        #imu-head-row { display: flex; gap: 6px; margin-top: 8px; }
+        .imu-head-btn {
+            flex: 1; padding: 5px 6px; font-family: var(--head); font-size: 10px;
+            font-weight: 700; letter-spacing: 0.5px; cursor: pointer;
+            color: var(--text-dim); background: var(--bg2);
+            border: 1px solid var(--border2); border-radius: 5px;
+            transition: all 0.15s;
+        }
+        .imu-head-btn:hover { color: var(--accent); border-color: var(--accent); background: #00d4ff12; }
+        .imu-head-btn:active { transform: translateY(1px); }
+        #btnImuSetHead.head-set { color: var(--ok); border-color: #00ff8855; background: #00ff8812; }
     </style>
 </head>
 
@@ -402,10 +413,8 @@
                 <iframe src="3d_simulation.html" title="3D Robot" tabindex="-1"></iframe>
             </div>
             <div id="mini-lidar-wrap" style="height:180px;">
-                <div id="mini-lidar-label">&#128225; LIDAR MAP
+                <div id="mini-lidar-label">
                     <span id="lidarStatus" class="lidar-stale">NO DATA</span>
-                    <button id="lidar-save-btn" class="lidar-btn" onclick="saveMap()" title="บันทึกแผนที่ฝั่ง Pi (ROS map_saver → .pgm/.yaml)">&#128190; SAVE</button>
-                    <button id="lidar-reset-btn" class="lidar-btn" onclick="resetMap()" title="เริ่ม SLAM สร้างแผนที่ใหม่">&#8635; RESET</button>
                 </div>
                 <iframe id="lidarFrame" src="lidar.html" title="LIDAR / SLAM"></iframe>
             </div>
@@ -413,38 +422,6 @@
 
         <!-- ═══════════════ CENTRE ═══════════════ -->
         <div class="panel" id="centre">
-            <div id="ai-panel">
-                <div id="ai-panel-header">
-                    <span>&#128247; CAM 3 / AI SNAPSHOT</span>
-                    <button id="ai-close-btn" onclick="toggleAI()">✕ CLOSE</button>
-                </div>
-                <div style="display:flex;align-items:center;gap:5px;padding:4px 8px;background:var(--surface2);border-bottom:1px solid var(--border);flex-shrink:0;">
-                    <span style="font-family:var(--head);font-size:9px;font-weight:700;letter-spacing:2px;color:var(--accent);flex-shrink:0;">CAM 3</span>
-                    <input id="cam3Url" placeholder="http://192.168.x.x/video" spellcheck="false"
-                        style="flex:1;background:var(--bg2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:3px 6px;border-radius:4px;"
-                        onkeydown="if(event.key==='Enter') connectCam3()">
-                    <button onclick="connectCam3()"
-                        style="font-family:var(--head);font-size:9px;font-weight:700;letter-spacing:1px;padding:3px 10px;border:1px solid var(--accent2);border-radius:4px;background:var(--accent-d);color:#fff;cursor:pointer;">
-                        CONNECT
-                    </button>
-                    <button onclick="document.getElementById('cam3Feed').src='';document.getElementById('cam3Feed').style.display='none';document.getElementById('cam3Placeholder').style.display='flex';"
-                        style="font-family:var(--head);font-size:9px;font-weight:700;letter-spacing:1px;padding:3px 8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg2);color:var(--text-dim);cursor:pointer;">
-                        ✕
-                    </button>
-                </div>
-                <div style="flex:1;position:relative;background:#030507;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-                    <div id="cam3Placeholder" style="color:var(--text-dim);font-size:11px;text-align:center;font-family:var(--mono);display:flex;flex-direction:column;align-items:center;gap:6px;">
-                        <span style="font-size:32px;opacity:0.4;">&#128247;</span>
-                        ใส่ URL แล้วกด CONNECT<br>
-                        <span style="font-size:9px;color:var(--text-dim)">หรือกด P สำหรับ YOLO Snapshot</span>
-                    </div>
-                    <img id="cam3Feed" alt="CAM 3" style="display:none;max-width:100%;max-height:100%;object-fit:contain;">
-                    <img id="camFeed" alt="YOLO" style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:contain;">
-                    <div id="detBadge" style="position:absolute;top:8px;right:8px;background:rgba(3,5,7,0.9);border:1px solid var(--ok);padding:3px 10px;border-radius:20px;font-size:9px;color:var(--ok);display:none;backdrop-filter:blur(4px);font-family:var(--head);font-weight:700;letter-spacing:1px;">0 detections</div>
-                    <div id="camPlaceholder" style="display:none;"></div>
-                </div>
-            </div>
-
             <!-- QR / MOTION PANEL -->
             <div id="qr-panel">
                 <div id="qr-panel-header">
@@ -556,6 +533,10 @@
                         <div class="imu-axis"><span class="imu-lbl">YAW</span><span class="imu-val y" id="imuYaw">—</span></div>
                     </div>
                 </div>
+                <div id="imu-head-row">
+                    <button id="btnImuSetHead" class="imu-head-btn" onclick="imuSetHead()" title="ตั้งหัวปัจจุบันให้เป็น 0° (yaw)">⊙ SET HEAD</button>
+                    <button id="btnImuResetHead" class="imu-head-btn" onclick="imuResetHead()" title="ล้างค่าหัว กลับไปใช้ yaw ดิบ">↺ RESET</button>
+                </div>
             </div>
             <div class="panel-title" style="margin-top:0;"><span class="title-dot" style="background:var(--amber)"></span>ARM / GRIPPER
                 <span class="panel-expand-btn" onclick="openPanelOverlay()" title="Expand [R]">⛶</span>
@@ -620,9 +601,18 @@
                 </div>
                 <div class="divider"></div>
                 <div class="sub-title">GRIPPER</div>
-                <div class="motor-controls">
+                <div class="motor-controls">    
                     <div class="btn" onclick="gripOpen()">🔓 OPEN<span class="key-badge">,</span></div>
                     <div class="btn" onclick="gripClose()">🔒 CLOSE<span class="key-badge">.</span></div>
+                </div>
+                <div class="step-row" style="margin-top:6px;">
+                    <span class="step-label">SELECT:</span>
+                    <div class="step-btn active" id="gripBtn1" onclick="setActiveGripper(1)">1</div>
+                    <div class="step-btn" id="gripBtn2" onclick="setActiveGripper(2)">2</div>
+                </div>
+                <div class="motor-controls" style="margin-top:4px;">
+                    <div class="btn" onclick="gripOpenSingle()">🔓 OPEN (single)</div>
+                    <div class="btn" onclick="gripCloseSingle()">🔒 CLOSE (single)</div>
                 </div>
                 <div class="divider"></div>
                 <div class="sub-title">LASER</div>
@@ -648,8 +638,15 @@
 
         <!-- ═══════════════ FOOTER ═══════════════ -->
         <div id="footer">
-            <button id="ai-trigger-btn" onclick="toggleAI()">AI</button>
-            <button id="qr-trigger-btn" onclick="toggleQR()">QR &#9641;</button>
+            <button id="qr-trigger-btn" onclick="toggleQR()">AI &#9641;</button>
+
+            <div class="footer-sep" id="lidar-sep-left" style="margin-left:auto;"></div>
+            <button id="lidar-mode-scan" class="footer-lidar-btn" onclick="setLidarMode('scan')">📡 SCAN</button>
+            <button id="lidar-mode-map"  class="footer-lidar-btn lidar-mode-active" onclick="setLidarMode('map')">🗺 MAP</button>
+            <button id="lidar-mode-both" class="footer-lidar-btn" onclick="setLidarMode('both')">⊕ BOTH</button>
+            <div class="footer-sep"></div>
+            <button id="lidar-save-btn"  class="footer-lidar-btn" onclick="saveMap()">💾 SAVE</button>
+            <button id="lidar-reset-btn" class="footer-lidar-btn" onclick="resetMap()">↺ RESET</button>
         </div>
 
     </div><!-- #shell -->
@@ -747,6 +744,17 @@
         addLog('SLAM restart (reset map)', 'warn', 'detect');
       };
     })();
+        window.setLidarMode = function(mode) {
+            const frame = document.getElementById('lidarFrame');
+            if (!frame) return;
+            frame.contentWindow.postMessage({ type: 'setMode', mode }, '*');
+            // อัปเดต active style ปุ่ม
+            ['scan','map','both'].forEach(m => {
+                const btn = document.getElementById('lidar-mode-' + m);
+                if (btn) btn.classList.toggle('lidar-mode-active', m === mode);
+            });
+            addLog('LIDAR mode → ' + mode.toUpperCase(), 'ok', 'detect');
+            };
     </script>
 </body>
 
