@@ -64,6 +64,14 @@
         .imu-head-btn:hover { color: var(--accent); border-color: var(--accent); background: #00d4ff12; }
         .imu-head-btn:active { transform: translateY(1px); }
         #btnImuSetHead.head-set { color: var(--ok); border-color: #00ff8855; background: #00ff8812; }
+        /* ── LED status badge (บริเวณ heading/IMU) + ปุ่มเปิดปิดไฟ ── */
+        #ledStatus {
+            margin-left: auto; font-size: 7px; letter-spacing: 1px; padding: 2px 6px;
+            border-radius: 10px; border: 1px solid;
+        }
+        #ledStatus.led-on  { color: var(--amber); border-color: #ffb02e66; background: #ffb02e14; }
+        #ledStatus.led-off { color: var(--text-dim); border-color: var(--border2); background: var(--bg2); }
+        #btnLed.active { color: var(--amber); border-color: #ffb02e77; background: #ffb02e14; }
     </style>
 </head>
 
@@ -455,6 +463,7 @@
                             <div class="cam-mode-btn active" id="camModeImg0" onclick="setCamMode(0,'img')" title="MJPEG via &lt;img&gt;">IMG</div>
                             <div class="cam-mode-btn" id="camModeFrame0" onclick="setCamMode(0,'iframe')" title="Load in iframe (for HTTPS)">FRAME</div>
                         </div>
+                        <button class="cam-grid-toggle-btn" id="camGridBtn0" onclick="toggleCamGrid(0)" title="Toggle grid overlay">⊞ GRID</button>
                         <button class="cam-connect-btn" id="camBtn0" onclick="toggleCam(0)">CONNECT</button>
                     </div>
                     <div class="cam-feed-wrap" id="camWrap0">
@@ -468,8 +477,20 @@
                             <div class="warn-msg">กล้องใช้ https:// แต่เว็บรันบน http://<br>Browser บล็อก cross-protocol stream<br><br>กด FRAME เพื่อโหลดใน iframe แทน</div>
                             <div class="warn-btn" onclick="setCamMode(0,'iframe');connectCam(0)">🔄 สลับเป็น FRAME MODE</div>
                         </div>
+                        <div class="cam-grid-overlay" id="camGrid0">
+                            <div class="gl-v gl-v1"></div>
+                            <div class="gl-v gl-v2"></div>
+                            <div class="gl-h gl-h1"></div>
+                            <div class="gl-h gl-h2"></div>
+                            <div class="gl-v gl-center-v"></div>
+                            <div class="gl-h gl-center-h"></div>
+                            <div class="gl-diag-line gl-diag-tl-br"></div>
+                            <div class="gl-diag-line gl-diag-br-tl"></div>
+                            <div class="gl-diag-line gl-diag-tr-bl"></div>
+                            <div class="gl-diag-line gl-diag-bl-tr"></div>
+                        </div>
                         <div class="cam-crosshair"></div>
-                        <div class="cam-expand-btn" onclick="openFullscreen(0)" title="Fullscreen [F]">⛶</div>
+                        <div class="cam-expand-btn" id="camExpandBtn0" onclick="toggleCamExpand(0)" title="Expand [F]">⛶</div>
                     </div>
                     <div class="cam-status-badge" id="camStat0">OFFLINE</div>
                 </div>
@@ -483,6 +504,7 @@
                             <div class="cam-mode-btn active" id="camModeImg1" onclick="setCamMode(1,'img')" title="MJPEG via &lt;img&gt;">IMG</div>
                             <div class="cam-mode-btn" id="camModeFrame1" onclick="setCamMode(1,'iframe')" title="Load in iframe (for HTTPS)">FRAME</div>
                         </div>
+                        <button class="cam-grid-toggle-btn" id="camGridBtn1" onclick="toggleCamGrid(1)" title="Toggle grid overlay">⊞ GRID</button>
                         <button class="cam-connect-btn" id="camBtn1" onclick="toggleCam(1)">CONNECT</button>
                     </div>
                     <div class="cam-feed-wrap" id="camWrap1">
@@ -496,8 +518,20 @@
                             <div class="warn-msg">กล้องใช้ https:// แต่เว็บรันบน http://<br>Browser บล็อก cross-protocol stream<br><br>กด FRAME เพื่อโหลดใน iframe แทน</div>
                             <div class="warn-btn" onclick="setCamMode(1,'iframe');connectCam(1)">🔄 สลับเป็น FRAME MODE</div>
                         </div>
+                        <div class="cam-grid-overlay" id="camGrid1">
+                            <div class="gl-v gl-v1"></div>
+                            <div class="gl-v gl-v2"></div>
+                            <div class="gl-h gl-h1"></div>
+                            <div class="gl-h gl-h2"></div>
+                            <div class="gl-v gl-center-v"></div>
+                            <div class="gl-h gl-center-h"></div>
+                            <div class="gl-diag-line gl-diag-tl-br"></div>
+                            <div class="gl-diag-line gl-diag-br-tl"></div>
+                            <div class="gl-diag-line gl-diag-tr-bl"></div>
+                            <div class="gl-diag-line gl-diag-bl-tr"></div>
+                        </div>
                         <div class="cam-crosshair"></div>
-                        <div class="cam-expand-btn" onclick="openFullscreen(1)" title="Fullscreen [F]">⛶</div>
+                        <div class="cam-expand-btn" id="camExpandBtn1" onclick="toggleCamExpand(1)" title="Expand [F]">⛶</div>
                     </div>
                     <div class="cam-status-badge" id="camStat1">OFFLINE</div>
                 </div>
@@ -523,6 +557,7 @@
             <div id="imu-widget" title="IMU (BWT901CL) via rescue.py">
                 <div id="imu-widget-head">
                     <span class="imu-dot"></span>IMU
+                    <span id="ledStatus" class="led-off" title="สถานะไฟ (จาก Teensy led_ack)">LED OFF</span>
                     <span id="imuStatus" class="imu-stale">NO DATA</span>
                 </div>
                 <div id="imu-row">
@@ -536,6 +571,7 @@
                 <div id="imu-head-row">
                     <button id="btnImuSetHead" class="imu-head-btn" onclick="imuSetHead()" title="ตั้งหัวปัจจุบันให้เป็น 0° (yaw)">⊙ SET HEAD</button>
                     <button id="btnImuResetHead" class="imu-head-btn" onclick="imuResetHead()" title="ล้างค่าหัว กลับไปใช้ yaw ดิบ">↺ RESET</button>
+                    <button id="btnLed" class="imu-head-btn" onclick="toggleLed()" title="เปิด/ปิดไฟ (LED บน Teensy)">💡 LED OFF</button>
                 </div>
             </div>
             <div class="panel-title" style="margin-top:0;"><span class="title-dot" style="background:var(--amber)"></span>ARM / GRIPPER
@@ -681,18 +717,7 @@
         <div class="log-panel-body" id="imu-log-body"></div>
     </div>
 
-    <!-- FULLSCREEN OVERLAY -->
-    <div id="fullscreen-overlay">
-        <div id="fs-topbar">
-            <span id="fs-label">CAM 1 — LIVE</span>
-            <span id="fs-status">● LIVE</span>
-            <button id="fs-close-btn" onclick="closeFullscreen()">✕ CLOSE [ESC]</button>
-        </div>
-        <img id="fs-img" alt="Fullscreen camera" style="display:none;width:100%;height:100%;object-fit:contain;">
-        <iframe id="fs-frame" style="display:none;width:100%;height:100%;border:none;background:#000;" allowfullscreen title="Fullscreen IFRAME camera"></iframe>
-        <div class="cam-placeholder" id="fs-placeholder"><span class="icon" style="font-size:48px;opacity:0.3;"></span><span style="font-size:13px;">Camera not connected</span></div>
-        <div id="fs-bottombar"><span>CLICK TO CLOSE · ESC TO EXIT · F = FULLSCREEN TOGGLE</span><span style="margin-left:auto;" id="fs-res">—</span></div>
-    </div>
+    <!-- (fullscreen modal removed — camera expand now happens in-place, see #dual-cam.cam-single-mode) -->
 
     <!-- PANEL EXPAND OVERLAY -->
     <div id="panel-overlay">

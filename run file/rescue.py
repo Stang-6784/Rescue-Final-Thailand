@@ -385,6 +385,7 @@ class RobotController:
         self.servo_step  = 1
         self.motor_state = "stop"
         self.serial_ok   = False
+        self.led_state   = False   # สถานะ LED ล่าสุด (อัปเดตจาก led_ack ของ Teensy)
         self.log_lines   = []
 
         # ── Send Loop 50Hz ───────────────────────────────────
@@ -446,6 +447,22 @@ class RobotController:
                 _push_ws({"type":"arm_log","data":text})  # ← แก้ bug indent
         elif t == "imu":
             # IMU จาก Pi (BWT901CL) → forward ตรงๆ ไป browser
+            _push_ws(msg)
+        elif t == "thermal":
+            # {"type":"thermal","ambient":<°C>,"object":<°C>} จาก Teensy (MLX90614)
+            # → forward ตรงๆ ไป browser
+            _push_ws(msg)
+        elif t == "mag":
+            # {"type":"mag","x":..,"y":..,"z":..,"heading":..,"dir":".."} จาก Teensy (QMC5883L)
+            # → forward ตรงๆ ไป browser
+            _push_ws(msg)
+        elif t == "led_ack":
+            # {"type":"led_ack","state":0|1} จาก Teensy ยืนยันสถานะ LED
+            self.led_state = bool(msg.get("state", 0))
+            self._log(f"LED → {'ON' if self.led_state else 'OFF'}")
+            _push_ws(msg)
+        elif t in ("motor_feedback", "motor_ack"):
+            # telemetry/ack มอเตอร์จาก Teensy ผ่าน Pi → forward ตรงๆ ไป browser
             _push_ws(msg)
 
     # ── Servo ────────────────────────────────────────────────
@@ -685,8 +702,13 @@ class RobotController:
             _send_pi(msg)
             self._log(f"arm_raw: {msg.get('cmd','')}")
 
-        elif t == "leds":
-            _send_pi(msg)
+        elif t in ("led", "leds"):
+            # browser ส่ง {"type":"led"/"leds","state"/"value":0|1} → แปลงเป็น
+            # {"type":"led","state":0|1} ตามที่ Teensy รับ (ดู .ino handleJsonCommand)
+            raw = msg.get("state", msg.get("value", 0))
+            state = 1 if (raw in (1, True, "1", "on", "ON")) else 0
+            _send_pi({"type": "led", "state": state})
+            self._log(f"LED cmd → {'ON' if state else 'OFF'}")
 
         elif t == "laser":
             val = bool(msg.get("value", False))

@@ -1,13 +1,14 @@
 /*
  * ============================================================================
- *  Teensy 4.0 Firmware - MOTOR ONLY (test build)
+ *  Teensy 4.0 Firmware - MOTOR + FLIPPER + IMU + THERMAL
  * ============================================================================
- *  ตัดมาจาก firmware ตัวเต็ม เหลือเฉพาะส่วน "คุมมอเตอร์" สำหรับเทสมอเตอร์ก่อน
- *  เอาออก: servo, gripper, laser, LED ทั้งหมด (รวม PWMServo)
+ *  ตัดมาจาก firmware ตัวเต็ม เหลือเฉพาะส่วน "คุมมอเตอร์" + flipper servo
+ *  รวม IMU (BNO055) และ Thermal IR (MLX90614) เข้าด้วยกัน
+ *  เอาออก: gripper/arm servo, laser, LED (ยังไม่มี handler)
  *  เก็บไว้: CAN MIT-mode drive ของ 2x CubeMars AK45-10, โปรโตคอล serial,
- *           telemetry motor_feedback, และ ping/pong
+ *           telemetry motor_feedback, IMU, thermal, และ ping/pong
  *
- *  >>> โปรโตคอล serial เหมือนเดิมทุกอย่าง <<<
+ *  >>> โปรโตคอล serial เหมือนเดิมทุกอย่าง + เพิ่ม thermal broadcast <<<
  *  ดังนั้น ROS2 bridge (control_motor_servo.py) ใช้ต่อได้เลย ไม่ต้องแก้
  *  - /motor/command ส่ง JSON มา -> มอเตอร์ทำงาน
  *  - /arm/command ส่งอะไรมาที่ไม่ใช่ JSON -> ถูกข้ามเงียบ (ไม่มี handler แล้ว)
@@ -19,6 +20,9 @@
  *      - Bus speed: 1,000,000 bps (1 Mbit/s)
  *      - Motor CAN IDs: LEFT = 1, RIGHT = 2
  *      - Control mode: MIT mode, ใช้สำหรับ VELOCITY control
+ *    - BNO055 IMU (I2C: SDA=18, SCL=19, addr 0x29, Wire)
+ *    - MLX90614 Thermal IR (I2C: SDA=17, SCL=16, addr 0x5A, Wire1 — บัสแยกจาก BNO055)
+ *    - QMC5883L Magnetometer/Compass (GY-271 รุ่นใหม่, I2C: SDA=17, SCL=16, addr 0x0D, Wire1)
  *
  *  Communication: USB Serial @ 115200 baud, line-based, ปิดท้ายด้วย '\n'
  *    คำสั่งที่รองรับ:
@@ -27,15 +31,21 @@
  *      {"type":"motor_sync","action":"syncvel","v1":<-100..100>,"v2":<-100..100>}
  *      {"type":"motor_all","action":"stop"}
  *      {"type":"ping"}                          -> ตอบ {"type":"pong"}
- *    Feedback ที่ส่งกลับ:
+ *      {"type":"led","state":<0|1>}             -> LED HIGH/LOW, ตอบ {"type":"led_ack",...}
+ *    Feedback ที่ส่งกลับ (ฝั่ง Pi/Windows อ่านได้เหมือน IMU):
  *      {"type":"motor_feedback","motors":[velL,velR], ...}
+ *      {"type":"thermal","ambient":<°C>,"object":<°C>}   <-- ใหม่ (5 Hz)
+ *      {"type":"mag","x":<raw>,"y":<raw>,"z":<raw>,"heading":<deg>,"dir":"<N..NW>"}  <-- ใหม่ (5 Hz)
+ *      IMU,yaw,pitch,roll,sys,gyro,accel,mag,gx,gy,gz,ax,ay,az   (20 Hz, CSV เดิม)
  *      LOG: ...   (ข้อความ text ทั่วไป)
  *
  *  !!! ก่อนใช้จริง ตรวจสอบ MIT-mode limits กับ datasheet CubeMars AK45-10 !!!
  *
  *  Library dependencies:
- *    - FlexCAN_T4   (tonton81/FlexCAN_T4)
- *    - ArduinoJson  (bblanchon/ArduinoJson, v6.x)
+ *    - FlexCAN_T4       (tonton81/FlexCAN_T4)
+ *    - ArduinoJson      (bblanchon/ArduinoJson, v6.x)
+ *    - Adafruit_BNO055  (+ Adafruit_Sensor)
+ *    - Adafruit_MLX90614
  * ============================================================================
  */
 
@@ -46,6 +56,7 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>   // IMU BNO055 (I2C: SDA=18, SCL=19)
+#include <Adafruit_MLX90614.h> // Thermal IR sensor (I2C, address 0x5A, share bus กับ BNO055)
 
 // ============================================================================
 // FLIPPER SERVOS (front + rear only — arm servos NOT attached in this build)
@@ -152,6 +163,54 @@ bool imuReady = false;
 bool imuCalMode = false;
 uint32_t lastImuMs = 0;
 const uint32_t IMU_PERIOD_MS = 50;   // 20 Hz, แทน delay(50) เดิม
+
+// ============================================================================
+// THERMAL SENSOR (MLX90614) — I2C บัสที่ 2: Wire1 (SCL=16, SDA=17)
+// ============================================================================
+// ต่อคนละบัสกับ BNO055 (Wire: SDA=18/SCL=19) ตามที่ต่อจริง (pin 16,17)
+// ส่งค่าออกเป็น JSON broadcast (คล้าย motor_feedback) เพื่อให้ฝั่ง Pi/Windows
+// parse ได้ตรงๆ โดยไม่ต้องเดา field แบบ CSV เหมือน IMU:
+//   {"type":"thermal","ambient":<°C>,"object":<°C>}
+// Thermal เป็น optional เหมือน IMU: ถ้า boot แล้วไม่เจอ จะ "ข้าม" ไม่ block ระบบอื่น
+Adafruit_MLX90614 mlx = Adafruit_MLX90614();
+bool thermalReady = false;
+uint32_t lastThermalMs = 0;
+const uint32_t THERMAL_PERIOD_MS = 200;   // 5 Hz, ตรงกับที่ระบุไว้ในสเปก
+
+// ============================================================================
+// MAGNETOMETER / COMPASS (QMC5883L) — I2C บัสที่ 2: Wire1 (SCL=16, SDA=17)
+// ============================================================================
+// GY-271 รุ่นใหม่ = ชิป QMC5883L (addr 0x0D) ไม่ใช่ HMC5883L (0x1E) → register
+// map คนละแบบ จึงเขียน raw-register driver ฝังในไฟล์ ไม่พึ่ง Adafruit HMC lib
+// อยู่บัสเดียวกับ MLX90614 (0x5A) — address ไม่ชนกัน ใช้ร่วม Wire1 ได้เลย
+//
+// ส่งค่าออกเป็น JSON broadcast (แบบเดียวกับ thermal):
+//   {"type":"mag","x":<raw>,"y":<raw>,"z":<raw>,"heading":<deg 0..360>}
+//   - x,y,z = ค่า raw 16-bit signed (LSB) จากเซนเซอร์
+//   - heading = มุมเข็มทิศคำนวณจาก atan2(y,x) หน่วยองศา (ยังไม่ชด declination)
+// Magnetometer เป็น optional เหมือน IMU/thermal: ไม่เจอ → ข้าม ไม่ block ระบบอื่น
+const uint8_t QMC5883L_ADDR   = 0x0D;
+// QMC5883L registers
+const uint8_t QMC5883L_REG_X_LSB   = 0x00;  // data เริ่มที่นี่ (X_LSB..Z_MSB = 6 ไบต์)
+const uint8_t QMC5883L_REG_STATUS  = 0x06;  // bit0 = DRDY
+const uint8_t QMC5883L_REG_CONFIG1 = 0x09;  // OSR/RNG/ODR/MODE
+const uint8_t QMC5883L_REG_CONFIG2 = 0x0A;  // soft reset ฯลฯ
+const uint8_t QMC5883L_REG_SETRESET= 0x0B;  // ต้องเขียน 0x01 ตาม datasheet
+// CONFIG1 = OSR=512(0b00<<6) | RNG=8G(0b01<<4) | ODR=200Hz(0b11<<2) | MODE=Continuous(0b01)
+//         = 0x00 | 0x10 | 0x0C | 0x01 = 0x1D
+const uint8_t QMC5883L_CONFIG1_VAL  = 0x1D;
+bool magReady = false;
+uint32_t lastMagMs = 0;
+const uint32_t MAG_PERIOD_MS = 200;   // 5 Hz broadcast
+
+// ============================================================================
+// LED (digital on/off) — สั่ง HIGH/LOW ตรงๆ ผ่าน JSON จาก rescue.py
+// ============================================================================
+//   {"type":"led","state":1}  -> เปิด (HIGH)
+//   {"type":"led","state":0}  -> ปิด (LOW)
+// *** แก้ LED_PIN ให้ตรงกับ pin จริงที่ต่อ (ค่า default = 14) ***
+const uint8_t LED_PIN = 12;
+bool ledState = false;
 
 // ============================================================================
 // SERIAL COMMAND BUFFER
@@ -378,6 +437,16 @@ void handleJsonCommand(const String &line) {
 
   } else if (strcmp(type, "ping") == 0) {
     Serial.println("{\"type\":\"pong\"}");
+
+  } else if (strcmp(type, "led") == 0) {
+    if (!doc.containsKey("state")) return;
+    int state = doc["state"];
+    ledState = (state != 0);
+    digitalWrite(LED_PIN, ledState ? HIGH : LOW);
+    // echo กลับให้ rescue.py ยืนยันสถานะ (optional แต่ช่วย debug)
+    Serial.print("{\"type\":\"led_ack\",\"state\":");
+    Serial.print(ledState ? 1 : 0);
+    Serial.println("}");
   }
   // type อื่น (เช่น leds) -> ข้ามเงียบ
 }
@@ -514,6 +583,100 @@ void readAndSendImu() {
     Serial.print(",");
     Serial.println(acc.z(), 3); // linear acceleration z (m/s^2)
   }
+}
+
+// ============================================================================
+// THERMAL (MLX90614) READ + OUTPUT
+// ============================================================================
+// รูปแบบ JSON เพื่อให้ parse ง่ายฝั่ง Pi/Windows (ต่างจาก IMU ที่เป็น CSV เดิม):
+//   {"type":"thermal","ambient":<°C 2 ตำแหน่งทศนิยม>,"object":<°C 2 ตำแหน่งทศนิยม>}
+void readAndSendThermal() {
+  if (!thermalReady) return;
+
+  float ambientC = mlx.readAmbientTempC();
+  float objectC  = mlx.readObjectTempC();
+
+  Serial.print("{\"type\":\"thermal\",\"ambient\":");
+  Serial.print(ambientC, 2);
+  Serial.print(",\"object\":");
+  Serial.print(objectC, 2);
+  Serial.println("}");
+}
+
+// ============================================================================
+// MAGNETOMETER (QMC5883L on Wire1) — raw-register driver + JSON OUTPUT
+// ============================================================================
+
+// helper: เขียน 1 register บน Wire1
+static bool qmcWriteReg(uint8_t reg, uint8_t val) {
+  Wire1.beginTransmission(QMC5883L_ADDR);
+  Wire1.write(reg);
+  Wire1.write(val);
+  return (Wire1.endTransmission() == 0);
+}
+
+// เริ่มต้น QMC5883L: soft reset → set/reset period → continuous mode
+// คืน true ถ้าคุยกับ chip สำเร็จ (ACK ครบทุกขั้น)
+bool initMagnetometer() {
+  Wire1.beginTransmission(QMC5883L_ADDR);
+  if (Wire1.endTransmission() != 0) return false;   // ไม่มี ACK ที่ 0x0D → ไม่เจอ chip
+
+  bool ok = true;
+  ok &= qmcWriteReg(QMC5883L_REG_CONFIG2,  0x80);   // soft reset
+  delay(10);
+  ok &= qmcWriteReg(QMC5883L_REG_SETRESET, 0x01);   // set/reset period (ตาม datasheet)
+  ok &= qmcWriteReg(QMC5883L_REG_CONFIG1,  QMC5883L_CONFIG1_VAL); // OSR512/8G/200Hz/continuous
+  return ok;
+}
+
+// อ่าน X/Y/Z (raw 16-bit signed) — คืน false ถ้าอ่านไม่ครบ 6 ไบต์
+static bool qmcReadRaw(int16_t &mx, int16_t &my, int16_t &mz) {
+  Wire1.beginTransmission(QMC5883L_ADDR);
+  Wire1.write(QMC5883L_REG_X_LSB);
+  if (Wire1.endTransmission(false) != 0) return false;   // repeated start
+
+  uint8_t n = Wire1.requestFrom((int)QMC5883L_ADDR, 6);
+  if (n < 6) return false;
+  uint8_t b[6];
+  for (int i = 0; i < 6; i++) b[i] = Wire1.read();
+
+  mx = (int16_t)(b[0] | (b[1] << 8));   // LSB ก่อน (QMC little-endian)
+  my = (int16_t)(b[2] | (b[3] << 8));
+  mz = (int16_t)(b[4] | (b[5] << 8));
+  return true;
+}
+
+// heading (deg 0..360) → ชื่อทิศ 8 ทิศ (N=เหนือ ... NW=ตะวันตกเฉียงเหนือ)
+// แบ่งเป็นช่วงละ 45° โดยให้ N อยู่กึ่งกลางช่วง (337.5..360 และ 0..22.5)
+static const char* headingToCardinal(float heading) {
+  static const char* dirs[8] = {"N","NE","E","SE","S","SW","W","NW"};
+  int idx = (int)((heading + 22.5f) / 45.0f) & 7;   // & 7 = mod 8 กันช่วง wrap 360→0
+  return dirs[idx];
+}
+
+// รูปแบบ JSON (แบบเดียวกับ thermal):
+//   {"type":"mag","x":<raw>,"y":<raw>,"z":<raw>,"heading":<deg 0..360>,"dir":"<N..NW>"}
+void readAndSendMag() {
+  if (!magReady) return;
+
+  int16_t mx, my, mz;
+  if (!qmcReadRaw(mx, my, mz)) return;   // อ่านพลาดรอบนี้ → ข้ามเงียบ
+
+  // heading จากระนาบ X-Y (สมมติเซนเซอร์วางระนาบ) ยังไม่ชด magnetic declination
+  float heading = atan2f((float)my, (float)mx) * 57.29577951f; // rad → deg
+  if (heading < 0) heading += 360.0f;
+
+  Serial.print("{\"type\":\"mag\",\"x\":");
+  Serial.print(mx);
+  Serial.print(",\"y\":");
+  Serial.print(my);
+  Serial.print(",\"z\":");
+  Serial.print(mz);
+  Serial.print(",\"heading\":");
+  Serial.print(heading, 2);
+  Serial.print(",\"dir\":\"");
+  Serial.print(headingToCardinal(heading));
+  Serial.println("\"}");
 }
 
 // ============================================================================
@@ -660,6 +823,33 @@ void setup() {
     Serial.println("ERROR,BNO055_NOT_FOUND");  // มอเตอร์ยังทำงานต่อได้
   }
 
+  // Thermal MLX90614 (I2C บัสที่ 2: Wire1, SCL=16/SDA=17) — optional, ไม่ block boot ถ้าไม่เจอ
+  Wire1.begin();
+  Wire1.setClock(100000);
+  Serial.println("INFO,START_MLX90614");
+  if (mlx.begin(MLX90614_I2CADDR, &Wire1)) {
+    thermalReady = true;
+    Serial.println("INFO,MLX90614_READY");
+  } else {
+    thermalReady = false;
+    Serial.println("ERROR,MLX90614_NOT_FOUND");  // มอเตอร์/IMU ยังทำงานต่อได้
+  }
+
+  // Magnetometer QMC5883L (Wire1 บัสเดียวกับ MLX90614) — optional, ไม่ block boot
+  Serial.println("INFO,START_QMC5883L");
+  if (initMagnetometer()) {
+    magReady = true;
+    Serial.println("INFO,QMC5883L_READY");
+  } else {
+    magReady = false;
+    Serial.println("ERROR,QMC5883L_NOT_FOUND");  // ระบบอื่นยังทำงานต่อได้
+  }
+
+  // LED (digital output) — เริ่มที่ปิด (LOW) ตอน boot
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+  ledState = false;
+
   // Flipper servos: attach + ไปท่า home (กลางๆ) ทันทีตอน boot
   for (int i = 0; i < NUM_SERVOS; i++){
     servos[i].attach(SERVO_PINS[i]);
@@ -672,7 +862,9 @@ void setup() {
 
   // หมายเหตุ: ยังไม่ enter motor mode ตอน boot โดยตั้งใจ
   // มอเตอร์จะ "ปลุก" ก็ต่อเมื่อได้รับคำสั่ง drive/motor/motor_sync ครั้งแรก (ปลอดภัยกว่า)
-  Serial.println("LOG: Teensy MOTOR + FLIPPER + IMU firmware started");
+  lastThermalMs = millis();
+  lastMagMs = millis();
+  Serial.println("LOG: Teensy MOTOR + FLIPPER + IMU + THERMAL + MAG firmware started");
 }
 
 void loop() {
@@ -706,6 +898,18 @@ void loop() {
     readAndSendImu();
   }
 
-  // 7) ไล่องศา servo เข้าหาเป้าหมายทีละนิด (จำกัดความเร็วการหมุน, non-blocking)
+  // 7) อ่าน + ส่งค่า Thermal (MLX90614) เป็นรอบๆ (JSON broadcast, 5 Hz)
+  if (millis() - lastThermalMs >= THERMAL_PERIOD_MS) {
+    lastThermalMs = millis();
+    readAndSendThermal();
+  }
+
+  // 8) อ่าน + ส่งค่า Magnetometer (QMC5883L) เป็นรอบๆ (JSON broadcast, 5 Hz)
+  if (millis() - lastMagMs >= MAG_PERIOD_MS) {
+    lastMagMs = millis();
+    readAndSendMag();
+  }
+
+  // 9) ไล่องศา servo เข้าหาเป้าหมายทีละนิด (จำกัดความเร็วการหมุน, non-blocking)
   updateServoEasing();
 }

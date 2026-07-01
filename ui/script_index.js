@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════
 const SERVO_NAMES = ["Joint1","Joint2","Joint3","Joint 4","Joint 5","Gripper","Gripper2","Flip-F","Flip-R"];
 const SERVO_KEYS_MAP = ['y','u','i','o','h','j','n','k','l'];
-const SERVO_DEFAULTS = [98, 150, 140,  80,  100, 100,  0,   85,   90];
+const SERVO_DEFAULTS = [98, 150, 150,  80,  100, 100,  0,   85,   90];
 const SERVO_MINS     = [50,  10,   0,   0,   0,  40,   0,     0,     0];
 const SERVO_MAXS     = [150, 150, 180, 125, 180, 180, 180,   180,   180];
 const NUM_SERVOS     = 9;
@@ -22,6 +22,10 @@ let state = {
   ang_spd:     0.50,
   rpm_spd:     80,
   lr: 0, rr: 0, heading: 0, victimCount: 0,
+  // ── เซนเซอร์จาก Teensy (ผ่าน Pi → rescue.py) ──
+  thermal: { ambient: null, object: null },
+  mag: { x: 0, y: 0, z: 0, dir: '' },
+  led: false,
 };
 
 const ARM_CFG = {
@@ -231,6 +235,9 @@ function connectWS() {
       if (msg.type === 'snap_ack') handleSnapAck(msg);
       if (msg.type === 'custom_posture_ack') handleCustomPostureAck(msg);
       if (msg.type === 'imu') updateIMU(msg);
+      if (msg.type === 'thermal') updateThermal(msg);
+      if (msg.type === 'mag') updateMag(msg);
+      if (msg.type === 'led_ack') updateLed(msg);
       renderAll();
     } catch(e) { addLog('msg err: ' + e.message, 'err'); }
   };
@@ -425,6 +432,46 @@ function setCamMode(idx, mode) {
   document.getElementById(`camModeImg${idx}`).className   = 'cam-mode-btn' + (mode === 'img'    ? ' active' : '');
   document.getElementById(`camModeFrame${idx}`).className = 'cam-mode-btn' + (mode === 'iframe' ? ' active https-mode' : '');
   if (camState[idx].live) { disconnectCam(idx); setTimeout(() => connectCam(idx), 50); }
+}
+
+const camGridState = [false, false, false]; // grid overlay on/off per cam
+const camGridROs = {};
+function _drawCamGridDiagonals(idx) {
+  const overlay = document.getElementById(`camGrid${idx}`);
+  if (!overlay) return;
+  const tl = overlay.querySelector('.gl-diag-tl-br');
+  const br = overlay.querySelector('.gl-diag-br-tl');
+  const tr = overlay.querySelector('.gl-diag-tr-bl');
+  const bl = overlay.querySelector('.gl-diag-bl-tr');
+  if (!tl || !tr || !br || !bl) return;
+  const w = overlay.clientWidth, h = overlay.clientHeight;
+  if (!w || !h) return;
+  const len = Math.sqrt(w * w + h * h) / 2;
+  const angle = Math.atan2(h, w) * 180 / Math.PI;
+  // TL→center and BR→center (same diagonal line, two halves)
+  tl.style.width = len + 'px';
+  tl.style.transform = `rotate(${angle}deg)`;
+  br.style.width = len + 'px';
+  br.style.transform = `rotate(${180 + angle}deg)`;
+  // TR→center and BL→center
+  tr.style.width = len + 'px';
+  tr.style.transform = `rotate(${-angle}deg)`;
+  bl.style.width = len + 'px';
+  bl.style.transform = `rotate(${180 - angle}deg)`;
+}
+function toggleCamGrid(idx) {
+  camGridState[idx] = !camGridState[idx];
+  const overlay = document.getElementById(`camGrid${idx}`);
+  const btn = document.getElementById(`camGridBtn${idx}`);
+  if (overlay) overlay.classList.toggle('on', camGridState[idx]);
+  if (btn) btn.classList.toggle('active', camGridState[idx]);
+  if (camGridState[idx]) {
+    _drawCamGridDiagonals(idx);
+    if (!camGridROs[idx] && overlay && window.ResizeObserver) {
+      camGridROs[idx] = new ResizeObserver(() => _drawCamGridDiagonals(idx));
+      camGridROs[idx].observe(overlay);
+    }
+  }
 }
 
 function toggleCam(idx) { camState[idx].live ? disconnectCam(idx) : connectCam(idx); }
@@ -1105,7 +1152,7 @@ function handleKeyDown(e) {
   if (postureName) { sendPosture(postureName); return; }
 
   if (action==='snapshot')   { sendSnap(); return; }
-  if (action==='fullscreen') { if (!fsActive) openFullscreen(0); return; }
+  if (action==='fullscreen') { fsActive ? closeFullscreen() : openFullscreen(lastHoveredCamIdx); return; }
   if (action==='quit_warn')  { addLog('Close tab to stop rescue.py','warn'); return; }
 }
 
@@ -1158,58 +1205,44 @@ function stopAngleHold()  { clearTimeout(angleHoldTimer); clearInterval(angleHol
 
 
 // ═══════════════════════════════════════
-//  FULLSCREEN
+//  CAM EXPAND (in-place single-view, rest of UI stays visible)
 // ═══════════════════════════════════════
-let fsActive=false, fsCamIdx=0, fsUpdateInterval=null;
+let fsActive=false, fsCamIdx=0;
+
+let lastHoveredCamIdx = 0;
+[0, 1].forEach(idx => {
+  const wrap = document.getElementById(`camWrap${idx}`);
+  if (wrap) wrap.addEventListener('mouseenter', () => { lastHoveredCamIdx = idx; });
+});
 
 function openFullscreen(idx) {
-  fsCamIdx=idx; fsActive=true;
-  const overlay = document.getElementById('fullscreen-overlay');
-  const fsImg   = document.getElementById('fs-img');
-  const fsFrame = document.getElementById('fs-frame');
-  const fsPh    = document.getElementById('fs-placeholder');
-  const isLive  = camState[idx].live;
-  const mode    = camState[idx].mode;
-
-  document.getElementById('fs-label').textContent     = `CAM ${idx+1} — ${isLive?'LIVE':'OFFLINE'}`;
-  document.getElementById('fs-status').style.display  = isLive ? 'inline-block' : 'none';
-  fsImg.style.display='none'; fsFrame.style.display='none'; fsPh.style.display='none';
-
-  if (isLive && mode==='iframe') {
-    fsFrame.src=camState[idx].url; fsFrame.style.display='block';
-  } else if (isLive && mode==='img') {
-    const src = document.getElementById(`camImg${idx}`);
-    if (src?.src && src.src!==window.location.href) { fsImg.src=src.src; fsImg.style.display='block'; }
-    else fsPh.style.display='block';
-    clearInterval(fsUpdateInterval);
-    fsUpdateInterval = setInterval(() => {
-      const s = document.getElementById(`camImg${idx}`);
-      if (s && camState[idx].live && s.src && s.src!==fsImg.src) { fsImg.src=s.src; fsImg.style.display='block'; fsPh.style.display='none'; }
-    }, 500);
-  } else {
-    fsPh.style.display='block';
-  }
-
-  overlay.classList.add('open');
-  overlay.requestFullscreen?.().catch(()=>{});
+  fsCamIdx = idx; fsActive = true;
+  const dualCam = document.getElementById('dual-cam');
+  if (dualCam) dualCam.classList.add('cam-single-mode');
+  [0, 1].forEach(i => {
+    document.getElementById(`camCell${i}`)?.classList.toggle('cam-cell-active', i === idx);
+    const btn = document.getElementById(`camExpandBtn${i}`);
+    if (btn) { btn.classList.toggle('active', i === idx); btn.title = i === idx ? 'Collapse [F]' : 'Expand [F]'; }
+  });
+  requestAnimationFrame(() => { if (camGridState[idx]) _drawCamGridDiagonals(idx); });
 }
 
 function closeFullscreen() {
-  fsActive=false;
-  document.getElementById('fullscreen-overlay').classList.remove('open');
-  clearInterval(fsUpdateInterval);
-  document.getElementById('fs-img').src   = '';
-  document.getElementById('fs-frame').src = '';
-  document.getElementById('fs-frame').style.display = 'none';
-  document.getElementById('fs-img').style.display   = 'none';
-  document.fullscreenElement && document.exitFullscreen().catch(()=>{});
+  fsActive = false;
+  const dualCam = document.getElementById('dual-cam');
+  if (dualCam) dualCam.classList.remove('cam-single-mode');
+  [0, 1].forEach(i => {
+    document.getElementById(`camCell${i}`)?.classList.remove('cam-cell-active');
+    const btn = document.getElementById(`camExpandBtn${i}`);
+    if (btn) { btn.classList.remove('active'); btn.title = 'Expand [F]'; }
+  });
+  requestAnimationFrame(() => { [0, 1].forEach(i => { if (camGridState[i]) _drawCamGridDiagonals(i); }); });
 }
 
-document.getElementById('fullscreen-overlay').addEventListener('click', e => {
-  if (e.target===document.getElementById('fullscreen-overlay') || e.target===document.getElementById('fs-img'))
-    closeFullscreen();
-});
-document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && fsActive) closeFullscreen(); });
+function toggleCamExpand(idx) {
+  (fsActive && fsCamIdx === idx) ? closeFullscreen() : openFullscreen(idx);
+}
+
 
 
 // ═══════════════════════════════════════
@@ -1860,6 +1893,55 @@ function updateIMU(msg) {
 
   drawIMUAH();
   if (fresh) _logIMU();
+}
+
+// ═══════════════════════════════════════
+//  THERMAL / MAGNETOMETER / LED — data via rescue.py WebSocket (จาก Teensy)
+// ═══════════════════════════════════════
+// Thermal (MLX90614): {type:'thermal', ambient, object} — broadcast ~5Hz
+let _thermalLogLast = { t: 0, obj: null };
+function updateThermal(msg) {
+  const amb = Number(msg.ambient), obj = Number(msg.object);
+  if (!isFinite(obj)) return;
+  state.thermal = { ambient: amb, object: obj };
+  const oEl = document.getElementById('thermalObject');
+  const aEl = document.getElementById('thermalAmbient');
+  if (oEl) oEl.textContent = obj.toFixed(1) + '°C';
+  if (aEl) aEl.textContent = isFinite(amb) ? amb.toFixed(1) + '°C' : '--';
+  // log แบบไม่สแปม: อย่างน้อยทุก 2s หรือเมื่อ object เปลี่ยน >= 1°C
+  const now = Date.now();
+  if (_thermalLogLast.obj === null
+      || Math.abs(obj - _thermalLogLast.obj) >= 1
+      || now - _thermalLogLast.t >= 2000) {
+    _thermalLogLast = { t: now, obj };
+    addLog(`Thermal: obj ${obj.toFixed(1)}°C / amb ${isFinite(amb) ? amb.toFixed(1) : '--'}°C`,
+           obj >= 45 ? 'warn' : 'ok');
+  }
+}
+
+// Magnetometer (QMC5883L): {type:'mag', x,y,z, heading, dir} — ป้อน heading เข้า compass
+function updateMag(msg) {
+  if (typeof msg.heading === 'number') state.heading = ((msg.heading % 360) + 360) % 360;
+  state.mag = { x: msg.x, y: msg.y, z: msg.z, dir: msg.dir || '' };
+  drawCompass(state.heading);
+}
+
+// กดปุ่มไฟ → ส่งคำสั่งสลับสถานะไป Teensy (ปุ่ม/บ่งชี้จริงอัปเดตเมื่อ led_ack กลับมา)
+function toggleLed() {
+  const next = state.led ? 0 : 1;
+  sendCmd({ type: 'led', state: next });
+  addLog(`LED cmd → ${next ? 'ON' : 'OFF'}`, next ? 'ok' : 'move');
+}
+
+// LED ack จาก Teensy: {type:'led_ack', state:0|1}
+function updateLed(msg) {
+  const on = (msg.state === 1 || msg.state === true);
+  state.led = on;
+  const btn = document.getElementById('btnLed');
+  if (btn) { btn.classList.toggle('active', on); btn.textContent = on ? '💡 LED ON' : '💡 LED OFF'; }
+  const ind = document.getElementById('ledStatus');
+  if (ind) { ind.textContent = on ? 'LED ON' : 'LED OFF'; ind.className = on ? 'led-on' : 'led-off'; }
+  addLog(`LED ${on ? 'ON' : 'OFF'}`, on ? 'ok' : 'move');
 }
 
 function drawIMUAH() {

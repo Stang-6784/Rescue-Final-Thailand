@@ -273,6 +273,13 @@ class TcpBridgeNode(Node):
                 self._publish_arm(cmd)
             return
 
+        # ── LED -> /motor/command (JSON) : Teensy รับใน handleJsonCommand ──
+        if t == "led":
+            state = 1 if msg.get("state", 0) in (1, True, "1") else 0
+            self._publish_motor({"type": "led", "state": state})
+            self.get_logger().info(f"led -> {state}")
+            return
+
         if t in ("leds", "laser", "snapshot"):
             self.get_logger().info(f"'{t}' ยังไม่มีใน Teensy build นี้ -> ข้าม")
             return

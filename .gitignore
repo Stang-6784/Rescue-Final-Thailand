@@ -5,3 +5,6 @@ AI_Detection/best.pt
 /models
 *.stl
 *.ini
+
+#Ignore md for claude
+*.md
