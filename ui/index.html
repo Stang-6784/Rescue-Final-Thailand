@@ -72,6 +72,14 @@
         #ledStatus.led-on  { color: var(--amber); border-color: #ffb02e66; background: #ffb02e14; }
         #ledStatus.led-off { color: var(--text-dim); border-color: var(--border2); background: var(--bg2); }
         #btnLed.active { color: var(--amber); border-color: #ffb02e77; background: #ffb02e14; }
+        /* ── Laser status badge + ปุ่มเปิดปิดเลเซอร์ ── */
+        #laserStatus {
+            font-size: 7px; letter-spacing: 1px; padding: 2px 6px;
+            border-radius: 10px; border: 1px solid;
+        }
+        #laserStatus.led-on  { color: var(--danger); border-color: #ff3b3b66; background: #ff3b3b14; }
+        #laserStatus.led-off { color: var(--text-dim); border-color: var(--border2); background: var(--bg2); }
+        #btnLaser.active { color: var(--danger); border-color: #ff3b3b77; background: #ff3b3b14; }
     </style>
 </head>
 
@@ -335,15 +343,15 @@
             <div class="panel-title"><span class="title-dot"></span>MOTOR DRIVE</div>
             <div class="panel-body">
                 <div class="move-grid">
-                    <div class="btn" id="btn-q" data-key="q">DIAG-FL<span class="key-badge">Q</span></div>
+                    <div class="move-grid-empty"></div>
                     <div class="btn" id="btn-w" data-key="w">FORWARD<span class="key-badge">W</span></div>
-                    <div class="btn" id="btn-e" data-key="e">DIAG-FR<span class="key-badge">E</span></div>
+                    <div class="move-grid-empty"></div>
                     <div class="btn" id="btn-a" data-key="a">LEFT<span class="key-badge">A</span></div>
                     <div class="btn btn-danger" id="btn-x" data-key="x">BRAKE<span class="key-badge">X</span></div>
                     <div class="btn" id="btn-d" data-key="d">RIGHT<span class="key-badge">D</span></div>
-                    <div class="btn" id="btn-z" data-key="z">DIAG-BL<span class="key-badge">Z</span></div>
+                    <div class="move-grid-empty"></div>
                     <div class="btn" id="btn-s" data-key="s">BACK<span class="key-badge">S</span></div>
-                    <div class="btn" id="btn-c" data-key="c">DIAG-BR<span class="key-badge">C</span></div>
+                    <div class="move-grid-empty"></div>
                 </div>
                 <div class="divider"></div>
                 <div class="speed-panel">
@@ -458,7 +466,7 @@
                 <div class="cam-cell" id="camCell0">
                     <div class="cam-toolbar">
                         <span class="cam-label">CAM 1</span>
-                        <input class="cam-input" id="camUrl0" placeholder="http://192.168.x.x/video  or  https://..." spellcheck="false">
+                        <input class="cam-input" id="camUrl0" value="http://" placeholder="http://192.168.x.x/video  or  https://..." spellcheck="false">
                         <div class="cam-mode-toggle">
                             <div class="cam-mode-btn active" id="camModeImg0" onclick="setCamMode(0,'img')" title="MJPEG via &lt;img&gt;">IMG</div>
                             <div class="cam-mode-btn" id="camModeFrame0" onclick="setCamMode(0,'iframe')" title="Load in iframe (for HTTPS)">FRAME</div>
@@ -499,7 +507,7 @@
                 <div class="cam-cell" id="camCell1">
                     <div class="cam-toolbar">
                         <span class="cam-label">CAM 2</span>
-                        <input class="cam-input" id="camUrl1" placeholder="http://192.168.x.x/video  or  https://..." spellcheck="false">
+                        <input class="cam-input" id="camUrl1" value="http://" placeholder="http://192.168.x.x/video  or  https://..." spellcheck="false">
                         <div class="cam-mode-toggle">
                             <div class="cam-mode-btn active" id="camModeImg1" onclick="setCamMode(1,'img')" title="MJPEG via &lt;img&gt;">IMG</div>
                             <div class="cam-mode-btn" id="camModeFrame1" onclick="setCamMode(1,'iframe')" title="Load in iframe (for HTTPS)">FRAME</div>
@@ -558,6 +566,7 @@
                 <div id="imu-widget-head">
                     <span class="imu-dot"></span>IMU
                     <span id="ledStatus" class="led-off" title="สถานะไฟ (จาก Teensy led_ack)">LED OFF</span>
+                    <span id="laserStatus" class="led-off" title="สถานะเลเซอร์ (จาก Teensy laser_ack)">LASER OFF</span>
                     <span id="imuStatus" class="imu-stale">NO DATA</span>
                 </div>
                 <div id="imu-row">
@@ -572,6 +581,7 @@
                     <button id="btnImuSetHead" class="imu-head-btn" onclick="imuSetHead()" title="ตั้งหัวปัจจุบันให้เป็น 0° (yaw)">⊙ SET HEAD</button>
                     <button id="btnImuResetHead" class="imu-head-btn" onclick="imuResetHead()" title="ล้างค่าหัว กลับไปใช้ yaw ดิบ">↺ RESET</button>
                     <button id="btnLed" class="imu-head-btn" onclick="toggleLed()" title="เปิด/ปิดไฟ (LED บน Teensy)">💡 LED OFF</button>
+                    <button id="btnLaser" class="imu-head-btn" onclick="toggleLaser()" title="เปิด/ปิดเลเซอร์ (Laser บน Teensy)">🔴 LASER OFF</button>
                 </div>
             </div>
             <div class="panel-title" style="margin-top:0;"><span class="title-dot" style="background:var(--amber)"></span>ARM / GRIPPER

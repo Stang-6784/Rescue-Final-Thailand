@@ -54,13 +54,9 @@ SERVO_DEFAULTS = [98, 150, 140,  80,  100, 100,  0,   85,   90]
 SERVO_MINS     = [50,  10,   0,  0,  0, 0, 0, 0, 0]
 SERVO_MAXS     = [150, 170, 157, 180, 170, 180, 180, 180, 180]
 
-GRIP_OPEN  = 70
-GRIP_CLOSE = 10
+GRIP_OPEN  = 100
+GRIP_CLOSE = 120
 GRIP_MID   = (GRIP_OPEN + GRIP_CLOSE) // 2
-
-GRIP2_OPEN  = 180
-GRIP2_CLOSE = 0
-GRIP2_MID   = (GRIP2_OPEN + GRIP2_CLOSE) // 2
 
 HOME_Y, HOME_Z, HOME_P = 30.0, 18.0, 30.0
 
@@ -386,6 +382,7 @@ class RobotController:
         self.motor_state = "stop"
         self.serial_ok   = False
         self.led_state   = False   # สถานะ LED ล่าสุด (อัปเดตจาก led_ack ของ Teensy)
+        self.laser_state = False   # สถานะ Laser ล่าสุด (อัปเดตจาก laser_ack ของ Teensy)
         self.log_lines   = []
 
         # ── Send Loop 50Hz ───────────────────────────────────
@@ -460,6 +457,11 @@ class RobotController:
             # {"type":"led_ack","state":0|1} จาก Teensy ยืนยันสถานะ LED
             self.led_state = bool(msg.get("state", 0))
             self._log(f"LED → {'ON' if self.led_state else 'OFF'}")
+            _push_ws(msg)
+        elif t == "laser_ack":
+            # {"type":"laser_ack","state":0|1} จาก Teensy ยืนยันสถานะ Laser
+            self.laser_state = bool(msg.get("state", 0))
+            self._log(f"Laser → {'ON' if self.laser_state else 'OFF'}")
             _push_ws(msg)
         elif t in ("motor_feedback", "motor_ack"):
             # telemetry/ack มอเตอร์จาก Teensy ผ่าน Pi → forward ตรงๆ ไป browser
@@ -665,22 +667,19 @@ class RobotController:
         elif t == "set_step":
             self.servo_step = int(msg.get("step",1))
 
-        # ── Gripper (PWMServo ปรับองศาได้ — สั่ง servo_set ตรงๆ, คุม Gripper#1+#2 พร้อมกัน) ──
+        # ── Gripper (PWMServo ปรับองศาได้ — สั่ง servo_set ตรงๆ, คุม Gripper#1 อย่างเดียว) ──
         elif t == "motor_grip":
             self._servo_cmd(5, GRIP_CLOSE)
-            self._servo_cmd(6, GRIP2_CLOSE)
-            self._log(f"Gripper → CLOSE ({self.angles[5]}° / {self.angles[6]}°)")
+            self._log(f"Gripper → CLOSE ({self.angles[5]}°)")
 
         elif t == "motor_reverse":
             self._servo_cmd(5, GRIP_OPEN)
-            self._servo_cmd(6, GRIP2_OPEN)
-            self._log(f"Gripper → OPEN ({self.angles[5]}° / {self.angles[6]}°)")
+            self._log(f"Gripper → OPEN ({self.angles[5]}°)")
 
         elif t == "motor_stop":
             self._servo_cmd(5, self.angles[5])
-            self._servo_cmd(6, self.angles[6])
             self.motor_state = "stop"
-            self._log(f"Gripper → HOLD ({self.angles[5]}° / {self.angles[6]}°)")
+            self._log(f"Gripper → HOLD ({self.angles[5]}°)")
 
         # ── Posture ───────────────────────────────────────────
         elif t == "posture":
@@ -711,9 +710,12 @@ class RobotController:
             self._log(f"LED cmd → {'ON' if state else 'OFF'}")
 
         elif t == "laser":
-            val = bool(msg.get("value", False))
-            _send_pi({"type": "laser", "value": val})
-            self._log(f"Laser → {'ON' if val else 'OFF'}")
+            # browser ส่ง {"type":"laser","state"/"value":0|1} → แปลงเป็น
+            # {"type":"laser","state":0|1} ตามที่ Teensy รับ (ดู .ino handleJsonCommand)
+            raw = msg.get("state", msg.get("value", 0))
+            state = 1 if (raw in (1, True, "1", "on", "ON")) else 0
+            _send_pi({"type": "laser", "state": state})
+            self._log(f"Laser cmd → {'ON' if state else 'OFF'}")
 
         elif t == "snapshot":
             self._log("Snapshot requested")

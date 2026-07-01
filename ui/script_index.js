@@ -8,7 +8,7 @@ const SERVO_MINS     = [50,  10,   0,   0,   0,  40,   0,     0,     0];
 const SERVO_MAXS     = [150, 150, 180, 125, 180, 180, 180,   180,   180];
 const NUM_SERVOS     = 9;
 
-let MOVE_KEYS = new Set(['w','a','s','d','q','e','z','c']);
+let MOVE_KEYS = new Set(['w','a','s','d']);
 const POSTURE_FKEYS  = {'F1':'home','F2':'horizontal','F3':'guard','F4':'giraff','F5':'stair','F6':'custom_1','F7':'custom_2','F8':'custom_3','F9':'custom_4'};
 
 let state = {
@@ -26,6 +26,7 @@ let state = {
   thermal: { ambient: null, object: null },
   mag: { x: 0, y: 0, z: 0, dir: '' },
   led: false,
+  laser: false,
 };
 
 const ARM_CFG = {
@@ -238,6 +239,7 @@ function connectWS() {
       if (msg.type === 'thermal') updateThermal(msg);
       if (msg.type === 'mag') updateMag(msg);
       if (msg.type === 'led_ack') updateLed(msg);
+      if (msg.type === 'laser_ack') updateLaser(msg);
       renderAll();
     } catch(e) { addLog('msg err: ' + e.message, 'err'); }
   };
@@ -1030,7 +1032,8 @@ const keyHeld = new Set();
 let KB_REV = {};
 function rebuildKBRev() { KB_REV={}; Object.entries(KB).forEach(([a,k])=>{ KB_REV[k]=a; }); }
 
-const ACTION_TO_MOVEKEY = { move_forward:'w', move_back:'s', move_left:'a', move_right:'d', move_diag_fl:'q', move_diag_fr:'e', move_diag_bl:'z', move_diag_br:'c' };
+// ทแยงมุมสั่งผ่าน combo w+a / w+d / s+a / s+d (computeMoveKey) แทนปุ่ม q/e/z/c โดยตรง
+const ACTION_TO_MOVEKEY = { move_forward:'w', move_back:'s', move_left:'a', move_right:'d' };
 
 // ── คาร์ดินัล w/a/s/d รวมกันเป็นทิศทแยง + สลับการหมุนของ a/d ──
 // physLetter = ปุ่มจริงที่กด, computeMoveKey() แปลงชุดปุ่มที่กดค้างเป็น "คีย์คำสั่ง" ที่ส่งให้ Pi
@@ -1151,6 +1154,8 @@ function handleKeyDown(e) {
   const postureName = ACTION_TO_POSTURE[action];
   if (postureName) { sendPosture(postureName); return; }
 
+  if (action==='led_toggle') { toggleLed(); return; }
+  if (action==='laser_toggle') { toggleLaser(); return; }
   if (action==='snapshot')   { sendSnap(); return; }
   if (action==='fullscreen') { fsActive ? closeFullscreen() : openFullscreen(lastHoveredCamIdx); return; }
   if (action==='quit_warn')  { addLog('Close tab to stop rescue.py','warn'); return; }
@@ -1302,8 +1307,8 @@ function switchTab(tab) {
 //  KEYBIND SYSTEM
 // ═══════════════════════════════════════
 const KB_DEFAULTS = {
-  move_forward:'w', move_back:'s', move_left:'a', move_right:'d',
-  move_diag_fl:'q', move_diag_fr:'e', move_diag_bl:'z', move_diag_br:'c', brake:'x',
+  move_forward:'w', move_back:'s', move_left:'a', move_right:'d', brake:'x',
+  led_toggle:'q', laser_toggle:'g',
   servo_0:'y', servo_1:'u', servo_2:'i', servo_3:'o',
   servo_4:'h', servo_5:'j', servo_6:'n', servo_7:'k', servo_8:'l',
   motor_grip:'.', motor_reverse:',', motor_stop:' ',
@@ -1315,8 +1320,6 @@ const KB_DEFAULTS = {
 const KB_LABELS = {
   move_forward:{label:'Forward',cat:'move'}, move_back:{label:'Backward',cat:'move'},
   move_left:{label:'Turn Left',cat:'move'}, move_right:{label:'Turn Right',cat:'move'},
-  move_diag_fl:{label:'Diag Fwd-Left',cat:'move'}, move_diag_fr:{label:'Diag Fwd-Right',cat:'move'},
-  move_diag_bl:{label:'Diag Back-Left',cat:'move'}, move_diag_br:{label:'Diag Back-Right',cat:'move'},
   brake:{label:'Brake (toggle)',cat:'move'},
   servo_0:{label:'J1 Shoulder',cat:'servo'}, servo_1:{label:'J2 Elbow',cat:'servo'},
   servo_2:{label:'J3 Extend',cat:'servo'},   servo_3:{label:'J4 Wrist',cat:'servo'},
@@ -1328,11 +1331,22 @@ const KB_LABELS = {
   posture_guard:{label:'Posture: Guard',cat:'posture'}, posture_giraff:{label:'GIRAFF',cat:'posture'}, posture_stair:{label:'STAIR',cat:'posture'},
   posture_custom_1:{label:'Custom 1',cat:'posture'}, posture_custom_2:{label:'Custom 2',cat:'posture'},
   posture_custom_3:{label:'Custom 3',cat:'posture'}, posture_custom_4:{label:'Custom 4',cat:'posture'},
+  led_toggle:{label:'LED Toggle',cat:'misc'}, laser_toggle:{label:'Laser Toggle',cat:'misc'},
   snapshot:{label:'AI Snapshot',cat:'misc'}, fullscreen:{label:'Fullscreen',cat:'misc'}, quit_warn:{label:'Quit Warning',cat:'misc'},
 };
 
 let KB = { ...KB_DEFAULTS };
-function loadKeybinds()  { try { const s=localStorage.getItem('rescuebot_kb'); if(s) KB={...KB_DEFAULTS,...JSON.parse(s)}; } catch(e){} }
+function loadKeybinds()  {
+  try {
+    const s=localStorage.getItem('rescuebot_kb');
+    if(s){
+      const saved=JSON.parse(s);
+      // เก็บเฉพาะ action ที่ยังมีอยู่ (ทิ้ง move_diag_* เก่าที่ผูก q/e/z/c ไว้ กัน q ชนกับ led_toggle)
+      const clean={}; Object.keys(KB_DEFAULTS).forEach(a=>{ if(saved[a]!==undefined) clean[a]=saved[a]; });
+      KB={...KB_DEFAULTS,...clean};
+    }
+  } catch(e){}
+}
 function saveKeybinds()  {
   const vals = Object.values(KB);
   if (vals.some((v,i)=>vals.indexOf(v)!==i)) { addLog('⚠ Conflict! Fix duplicate keys first.','err'); return; }
@@ -1942,6 +1956,24 @@ function updateLed(msg) {
   const ind = document.getElementById('ledStatus');
   if (ind) { ind.textContent = on ? 'LED ON' : 'LED OFF'; ind.className = on ? 'led-on' : 'led-off'; }
   addLog(`LED ${on ? 'ON' : 'OFF'}`, on ? 'ok' : 'move');
+}
+
+// กดปุ่มเลเซอร์ → ส่งคำสั่งสลับสถานะไป Teensy (ปุ่ม/บ่งชี้จริงอัปเดตเมื่อ laser_ack กลับมา)
+function toggleLaser() {
+  const next = state.laser ? 0 : 1;
+  sendCmd({ type: 'laser', state: next });
+  addLog(`Laser cmd → ${next ? 'ON' : 'OFF'}`, next ? 'ok' : 'move');
+}
+
+// Laser ack จาก Teensy: {type:'laser_ack', state:0|1}
+function updateLaser(msg) {
+  const on = (msg.state === 1 || msg.state === true);
+  state.laser = on;
+  const btn = document.getElementById('btnLaser');
+  if (btn) { btn.classList.toggle('active', on); btn.textContent = on ? '🔴 LASER ON' : '🔴 LASER OFF'; }
+  const ind = document.getElementById('laserStatus');
+  if (ind) { ind.textContent = on ? 'LASER ON' : 'LASER OFF'; ind.className = on ? 'led-on' : 'led-off'; }
+  addLog(`Laser ${on ? 'ON' : 'OFF'}`, on ? 'ok' : 'move');
 }
 
 function drawIMUAH() {

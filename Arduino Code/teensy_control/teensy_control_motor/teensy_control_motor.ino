@@ -4,7 +4,8 @@
  * ============================================================================
  *  ตัดมาจาก firmware ตัวเต็ม เหลือเฉพาะส่วน "คุมมอเตอร์" + flipper servo
  *  รวม IMU (BNO055) และ Thermal IR (MLX90614) เข้าด้วยกัน
- *  เอาออก: gripper/arm servo, laser, LED (ยังไม่มี handler)
+ *  เอาออก: gripper/arm servo (ยังไม่มี handler)
+ *  มี handler: LED (pin 12) + LASER (pin 11) digital on/off ผ่าน JSON
  *  เก็บไว้: CAN MIT-mode drive ของ 2x CubeMars AK45-10, โปรโตคอล serial,
  *           telemetry motor_feedback, IMU, thermal, และ ping/pong
  *
@@ -32,6 +33,7 @@
  *      {"type":"motor_all","action":"stop"}
  *      {"type":"ping"}                          -> ตอบ {"type":"pong"}
  *      {"type":"led","state":<0|1>}             -> LED HIGH/LOW, ตอบ {"type":"led_ack",...}
+ *      {"type":"laser","state":<0|1>}           -> LASER HIGH/LOW, ตอบ {"type":"laser_ack",...}
  *    Feedback ที่ส่งกลับ (ฝั่ง Pi/Windows อ่านได้เหมือน IMU):
  *      {"type":"motor_feedback","motors":[velL,velR], ...}
  *      {"type":"thermal","ambient":<°C>,"object":<°C>}   <-- ใหม่ (5 Hz)
@@ -118,6 +120,10 @@ const float T_MAX  =  20.0f;   // N*m
 // Velocity-mode tuning: Kp = 0 สำหรับ velocity control ล้วน, Kd = damping
 const float DRIVE_KP = 0.0f;
 const float DRIVE_KD = 2.0f;   // <-- tune ตามโหลด/มอเตอร์
+// Kd ตอน "เบรก" (ล้อถูกสั่ง vel=0): สูงกว่า DRIVE_KD → ต้านความเร็วแรงขึ้น
+// หุ่นหยุดไวขึ้นตอนปล่อยปุ่ม โดยไม่ต้อง exit motor mode (พร้อมออกตัวต่อทันที)
+// tune ได้ในช่วง (DRIVE_KD, KD_MAX=5.0]; แรงไปล้ออาจกระตุก
+const float BRAKE_KD = 4.0f;
 const float DRIVE_TORQUE_FF = 0.0f;
 const float DRIVE_POSITION_DUMMY = 0.0f; // ไม่ใช้ใน velocity mode, ส่ง 0
 
@@ -211,6 +217,14 @@ const uint32_t MAG_PERIOD_MS = 200;   // 5 Hz broadcast
 // *** แก้ LED_PIN ให้ตรงกับ pin จริงที่ต่อ (ค่า default = 14) ***
 const uint8_t LED_PIN = 12;
 bool ledState = false;
+
+// ============================================================================
+// LASER (digital on/off) — สั่ง HIGH/LOW ตรงๆ ผ่าน JSON จาก rescue.py
+// ============================================================================
+//   {"type":"laser","state":1}  -> เปิด (HIGH)
+//   {"type":"laser","state":0}  -> ปิด (LOW)
+const uint8_t LASER_PIN = 11;
+bool laserState = false;
 
 // ============================================================================
 // SERIAL COMMAND BUFFER
@@ -412,9 +426,9 @@ void handleJsonCommand(const String &line) {
       stopMotorsVelocity();
       driveActive = false;
       lastDriveCommandMs = millis();
-      if (motorModeActive) {
-        exitMotorModeBoth();
-      }
+      // ไม่ exit motor mode: คง frame ต่อเนื่องเพื่อเบรกล้อให้นิ่ง (vel=0 + BRAKE_KD)
+      // → หยุดไวกว่าเดิม (เดิม exit = ตัดไฟ แล้วล้อไหลตามแรงเฉื่อย)
+      //   และพร้อมออกตัวทันทีโดยไม่ต้อง re-enter motor mode
     }
 
   } else if (strcmp(type, "motor") == 0) {
@@ -446,6 +460,16 @@ void handleJsonCommand(const String &line) {
     // echo กลับให้ rescue.py ยืนยันสถานะ (optional แต่ช่วย debug)
     Serial.print("{\"type\":\"led_ack\",\"state\":");
     Serial.print(ledState ? 1 : 0);
+    Serial.println("}");
+
+  } else if (strcmp(type, "laser") == 0) {
+    if (!doc.containsKey("state")) return;
+    int state = doc["state"];
+    laserState = (state != 0);
+    digitalWrite(LASER_PIN, laserState ? HIGH : LOW);
+    // echo กลับให้ rescue.py ยืนยันสถานะ
+    Serial.print("{\"type\":\"laser_ack\",\"state\":");
+    Serial.print(laserState ? 1 : 0);
     Serial.println("}");
   }
   // type อื่น (เช่น leds) -> ข้ามเงียบ
@@ -747,11 +771,14 @@ void pollCanFeedback() {
 
 void sendMotorFrames() {
   if (!motorModeActive) return;
+  // ล้อที่ถูกสั่ง vel=0 → ใช้ BRAKE_KD (เบรกแรงขึ้น ให้หยุดไว) ; ล้อที่ยังวิ่ง → DRIVE_KD
+  float kdLeft  = (currentVelLeft  == 0.0f) ? BRAKE_KD : DRIVE_KD;
+  float kdRight = (currentVelRight == 0.0f) ? BRAKE_KD : DRIVE_KD;
   // คูณ direction ตอนส่งออก CAN เท่านั้น → currentVel*/telemetry ยังเก็บค่าตรรกะปกติ
   sendMitCommand(MOTOR_ID_LEFT, DRIVE_POSITION_DUMMY, currentVelLeft  * MOTOR_DIR_LEFT,
-                 DRIVE_KP, DRIVE_KD, DRIVE_TORQUE_FF);
+                 DRIVE_KP, kdLeft, DRIVE_TORQUE_FF);
   sendMitCommand(MOTOR_ID_RIGHT, DRIVE_POSITION_DUMMY, currentVelRight * MOTOR_DIR_RIGHT,
-                 DRIVE_KP, DRIVE_KD, DRIVE_TORQUE_FF);
+                 DRIVE_KP, kdRight, DRIVE_TORQUE_FF);
 }
 
 // ============================================================================
@@ -849,6 +876,11 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
   ledState = false;
+
+  // LASER (digital output) — เริ่มที่ปิด (LOW) ตอน boot
+  pinMode(LASER_PIN, OUTPUT);
+  digitalWrite(LASER_PIN, LOW);
+  laserState = false;
 
   // Flipper servos: attach + ไปท่า home (กลางๆ) ทันทีตอน boot
   for (int i = 0; i < NUM_SERVOS; i++){
